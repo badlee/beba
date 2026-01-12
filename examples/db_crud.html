@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Basic CRUD - DB Module</title>
+</head>
+
+<body>
+    <h1>Basic CRUD Operations</h1>
+
+    <script server>
+        const db = require("db");
+        const console = require("console");
+
+        // 1. Connect
+        const conn = db.connect("sqlite:///crud_test.db");
+
+        // 2. Define a simple model
+        const Product = conn.model("Product", {
+            name: { type: "string", required: true },
+            price: { type: "number", default: 0 },
+            category: "string"
+        });
+
+        // 3. Operations (Sync)
+        // Delete all products for clean run
+        const existing = Product.find({}).exec();
+        for (const p of existing) p.remove();
+
+        // CREATE
+        const p1 = Product.create({ name: "Laptop", price: 1200, category: "Electronics" });
+        const p2 = Product.create({ name: "Mouse", price: 25, category: "Electronics" });
+        const p3 = Product.create({ name: "Desk", price: 150, category: "Furniture" });
+
+        // READ (Find one)
+        const laptop = Product.findOne({ name: "Laptop" }).exec()[0];
+
+        // UPDATE
+        if (laptop) {
+            laptop.price = 1100;
+            laptop.save();
+        }
+
+        // READ (Find all)
+        const electronics = Product.find({ category: "Electronics" }).sort("-price").exec();
+
+        var results = {
+            created: [p1, p2, p3],
+            updatedLaptop: laptop,
+            electronicsSorted: electronics
+        };
+    </script>
+
+    <h2>Created Products</h2>
+    <ul>
+        {{#results.created}}
+        <li>{{name}} - ${{price}} ({{category}})</li>
+        {{/results.created}}
+    </ul>
+
+    <h2>Updated Laptop</h2>
+    {{#results.updatedLaptop}}
+    <p>{{name}}: ${{price}}</p>
+    {{/results.updatedLaptop}}
+
+    <h2>Electronics (Sorted by price DESC)</h2>
+    <ul>
+        {{#results.electronicsSorted}}
+        <li>{{name}} - ${{price}}</li>
+        {{/results.electronicsSorted}}
+    </ul>
+
+    <p><a href="/">Back to Index</a></p>
+</body>
+
+</html>

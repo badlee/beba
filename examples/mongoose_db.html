@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Mongoose-like DB Example</title>
+</head>
+
+<body>
+    <h1>Mongoose-like DB API</h1>
+    <div id="output"></div>
+
+    <script server>
+        const db = require("db");
+        const console = require("console");
+
+        // 1. Connection
+        const conn = db.connect("sqlite:///test_mongoose.db");
+
+        // 2. Define Schema (without 'new')
+        const UserSchema = conn.Schema({
+            firstName: { type: "string", required: true },
+            lastName: { type: "string", required: true },
+            age: { type: "number", default: 18 },
+            email: { type: "string", unique: true }
+        });
+
+        // 3. Add Virtuals
+        UserSchema.virtual("fullName")
+            .get(function () {
+                return this.firstName + " " + this.lastName;
+            })
+            .set(function (name) {
+                const parts = name.split(" ");
+                this.firstName = parts[0] || "";
+                this.lastName = parts[1] || "";
+            });
+
+        // 4. Add Instance Methods
+        UserSchema.methods.sayHi = function () {
+            return "Hi, I'm " + (this.fullName || "someone");
+        };
+
+        // 5. Add Middleware Hooks
+        UserSchema.pre("save", function () {
+            console.log("Saving user: " + this.fullName);
+        });
+
+        UserSchema.post("save", function () {
+            console.log("User saved successfully: " + this.id);
+        });
+
+        // 6. Create Model
+        const User = conn.Model("User", UserSchema);
+
+        // 7. Operations (Sync)
+        const users = User.find({}).exec();
+        for (const u of users) {
+            u.remove();
+        }
+
+        // Create a user
+        const john = User.create({
+            firstName: "John",
+            lastName: "Doe",
+            age: 25,
+            email: "john@example.com"
+        });
+
+        console.log("Created: " + john.fullName);
+        console.log(john.sayHi());
+
+        // Update using virtual setter
+        john.fullName = "Johnny Storm";
+        john.save();
+        console.log("Updated name: " + john.firstName);
+
+        // Create another
+        User.create({ firstName: "Jane", lastName: "Smith", age: 30, email: "jane@example.com" });
+
+        // Query chaining & operators
+        const resList = User.find({ age: { $gt: 20 } })
+            .sort("-age")
+            .limit(5)
+            .exec();
+
+        var demoResults = [];
+        if (resList && resList.length > 0) {
+            demoResults = resList.map(u => ({
+                name: u.fullName,
+                age: u.age,
+                email: u.email
+            }));
+        }
+    </script>
+
+    <h2>Results (Age > 20)</h2>
+    <pre>{{#demoResults}}Name: {{name}}, Age: {{age}}, Email: {{email}}
+{{/demoResults}}</pre>
+
+    <p><a href="/">Back to Index</a></p>
+</body>
+
+</html>

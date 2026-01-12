@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Hooks & Virtuals - DB Module</title>
+</head>
+
+<body>
+    <h1>Schema Hooks & Virtual Properties</h1>
+
+    <script server>
+        const db = require("db");
+        const console = require("console");
+        const conn = db.connect("sqlite:///logic_test.db");
+
+        // Schema can be called without 'new'
+        const UserSchema = conn.Schema({
+            firstName: "string",
+            lastName: "string"
+        });
+
+        // VIRTUAL: Full Name (not stored in DB)
+        UserSchema.virtual("fullName")
+            .get(function () { return this.firstName + " " + this.lastName; })
+            .set(function (name) {
+                const bits = name.split(" ");
+                this.firstName = bits[0] || "";
+                this.lastName = bits[1] || "";
+            });
+
+        // HOOK: Pre-save
+        UserSchema.pre("save", function () {
+            console.log("[PRE-SAVE] Processing user: " + this.fullName);
+            if (this.firstName) {
+                this.firstName = this.firstName.toUpperCase(); // Force uppercase
+            }
+        });
+
+        const User = conn.model("User", UserSchema);
+
+        // Cleanup
+        const users = User.find({}).exec();
+        for (const u of users) u.remove();
+
+        // Create using virtual setter (Use .new() instead of 'new User()')
+        const u = User.new({});
+        u.fullName = "Clark Kent";
+        u.save();
+
+        const savedList = User.find({ lastName: "Kent" }).exec();
+        const saved = (savedList && savedList.length > 0) ? savedList[0] : null;
+
+        var results = {
+            original: "Clark Kent",
+            processedFirstName: saved ? saved.firstName : "FAILED",
+            processedFullName: saved ? saved.fullName : "FAILED"
+        };
+    </script>
+
+    <h3>Virtual & Hook Logic</h3>
+    {{#results}}
+    <p>Input: {{original}}</p>
+    <p>Stored First Name (via Pre-save hook): <b id="firstname">{{processedFirstName}}</b></p>
+    <p>Full Name (via Virtual getter): <b id="fullname">{{processedFullName}}</b></p>
+    {{/results}}
+
+    <p><a href="/">Back to Index</a></p>
+</body>
+
+</html>

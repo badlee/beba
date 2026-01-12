@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Session SSE Example</title>
+</head>
+
+<body>
+    <h1>Session Events</h1>
+    <p>Your Session ID: <span id="sid"></span></p>
+    <div id="messages"></div>
+
+    <script server>
+        const sse = require("sse");
+        const cookies = require("cookies");
+        const { Session } = require("storage");
+
+        const session = new Session(cookies);
+        var sessionID = session.id;
+
+        // Link SSE to this session
+        sse.attach(session.id);
+
+        // Send a private message (this is now deferred)
+        sse.send("private", "1. Welcome back! This is a private message for your session only.");
+        sse.send("private", "2. Welcome back! This is a private message for your session only.");
+
+    </script>
+    <script>
+        document.getElementById("sid").textContent = "{{sessionID}}";
+
+        const evtSource = new EventSource("/events");
+        evtSource.addEventListener("private", (event) => {
+            const newElement = document.createElement("li");
+            newElement.textContent = "Private: " + event.data;
+            document.getElementById("messages").appendChild(newElement);
+        });
+
+        evtSource.addEventListener("heartbeat", (event) => {
+            console.log("Keep-alive heartbeat received");
+        });
+    </script>
+</body>
+
+</html>

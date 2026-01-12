@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Named Channels SSE Example</title>
+</head>
+
+<body>
+    <h1>Named Channels</h1>
+    <p>Subscribing to 'global' and 'news'</p>
+    <div id="messages"></div>
+
+    <script server>
+        const sse = require("sse");
+
+        // Broadcast to news channel
+        sse.to("news").publish("update", "Breaking: Named channels implemented! at " + new Date().toLocaleTimeString());
+    </script>
+
+    <script>
+        // Subscribe to custom channel via query param
+        const evtSource = new EventSource("/events?channels=news");
+
+        evtSource.addEventListener("update", (event) => {
+            const newElement = document.createElement("li");
+            newElement.textContent = "News: " + event.data;
+            document.getElementById("messages").appendChild(newElement);
+        });
+
+        evtSource.addEventListener("notification", (event) => {
+            const newElement = document.createElement("li");
+            newElement.textContent = "Global: " + event.data;
+            document.getElementById("messages").appendChild(newElement);
+        });
+    </script>
+</body>
+
+</html>

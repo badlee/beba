@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Global SSE Example</title>
+</head>
+
+<body>
+    <h1>Global Events</h1>
+    <div id="messages"></div>
+
+    <script server>
+        const sse = require("sse");
+        const storage = require("storage");
+
+        // Every time this page is hit, broadcast a notification
+        sse.publish("notification", "Someone visited the global page at " + new Date().toLocaleTimeString());
+
+        // Also increment a global counter
+        storage.shared.num.incr("visits", 1);
+        var totalVisits = storage.shared.num.get("visits");
+    </script>
+
+    <p>Total page visits: {{totalVisits}}</p>
+
+    <script>
+        const evtSource = new EventSource("/events");
+        evtSource.addEventListener("notification", (event) => {
+            const newElement = document.createElement("li");
+            newElement.textContent = "Global: " + event.data;
+            document.getElementById("messages").appendChild(newElement);
+        });
+    </script>
+</body>
+
+</html>

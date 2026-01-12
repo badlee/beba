@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Advanced Queries - DB Module</title>
+</head>
+
+<body>
+    <h1>Advanced Queries & Operators</h1>
+
+    <script server>
+        const db = require("db");
+        const conn = db.connect("sqlite:///queries_test.db");
+
+        const Item = conn.model("Item", {
+            code: "string",
+            stock: "number",
+            tags: "array"
+        });
+
+        // Setup (Sync)
+        const items = Item.find({}).exec();
+        for (const i of items) i.remove();
+
+        Item.create({ code: "A1", stock: 10, tags: ["new", "tech"] });
+        Item.create({ code: "A2", stock: 50, tags: ["sale"] });
+        Item.create({ code: "B1", stock: 0, tags: ["out"] });
+        Item.create({ code: "C1", stock: 100, tags: ["hot", "tech"] });
+
+        // 1. $gt (Greater Than)
+        const inStock = Item.find({ stock: { $gt: 0 } }).exec();
+
+        // 2. $in (In array)
+        const specific = Item.find({ code: { $in: ["A1", "C1"] } }).exec();
+
+        // 3. $ne (Not Equal)
+        const notA1 = Item.find({ code: { $ne: "A1" } }).exec();
+
+        // 4. Chaining (sort, limit, skip)
+        const top2 = Item.find({})
+            .sort("-stock")
+            .limit(2)
+            .exec();
+
+        // 5. Projection (select)
+        const codesOnly = Item.find({})
+            .select("code -stock")
+            .exec();
+
+        var results = { inStock, specific, notA1, top2, codesOnly };
+    </script>
+
+    <h3>In Stock (stock > 0)</h3>
+    <p>{{#results.inStock}}{{code}} {{/results.inStock}}</p>
+
+    <h3>Specific Codes (A1, C1)</h3>
+    <p>{{#results.specific}}{{code}} {{/results.specific}}</p>
+
+    <h3>Top 2 by Stock</h3>
+    <p>{{#results.top2}}{{code}} ({{stock}}) {{/results.top2}}</p>
+
+    <p><a href="/">Back to Index</a></p>
+</body>
+
+</html>
