@@ -1,0 +1,53 @@
+# Security Example: Bot Protection & JS Interactive Challenge
+#
+# Target: Demonstrate Layer 4 (Identity & Behavior) security.
+# Run: ./http-server --bind-file examples/security_bot_protection.bind
+#
+# Testing Commands:
+# 1. Blocked (Directly):
+#    curl -I http://127.0.0.1:9300/api/data
+#    -> Expected: 403 Forbidden (curl is in the bad-bots list)
+#
+# 2. Redirected (Challenge):
+#    curl -I -A "" http://127.0.0.1:9300/premium/content
+#    -> Expected: 302/303 Redirect to /_waf/challenge (Empty UA triggers challenge)
+#
+# 3. Success (Real Browser Simulation):
+#    curl -H "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36" \
+#         -H "Accept-Language: en-US,en;q=0.9" \
+#         http://127.0.0.1:9300/api/data
+#    -> Expected: 200 OK
+
+HTTP 127.0.0.1:9300
+    # Global Bot Protection (Optional)
+    # MIDDLEWARE @BOT[js_challenge=true threshold=40]
+
+    # --- Routes with varying protection levels ---
+
+    # 1. Simple API - Direct Block for Common Bots (curl, wget, python)
+    GET @BOT[js_challenge=false] "/api/data" JSON BEGIN
+        {
+            "status": "success",
+            "message": "Hello Human!",
+            "data": [1, 2, 3, 5, 8]
+        }
+    END GET
+
+    # 2. Premium Content - Forced JS Challenge for suspicious/headless agents
+    # threshold=50 triggers challenge for empty UAs or missing browser headers.
+    GET @BOT[js_challenge=true threshold=50] "/premium/content" BEGIN
+        context.SendString("✨ Highly Sensitive Premium Content ✨");
+    END GET
+
+    # 3. Custom Verification Path
+    # You can customize the path where the challenge is served.
+    GET @BOT[js_challenge=true path="/verify-identity"] "/secure-zone" BEGIN
+        context.SendString("Welcome to the secure zone.");
+    END GET
+
+    # Default landing
+    GET "/" TEXT BEGIN
+        "Bot Protection Demo is running on :9300"
+    END GET
+
+END HTTP

@@ -1,0 +1,24 @@
+SECURITY geojson_points
+    # 1. Individual points (can be exact locations of sensors or kiosks)
+    GEOJSON entry_kiosk BEGIN
+        {
+            "type": "Point",
+            "coordinates": [2.3522, 48.8566]
+        }
+    END POINT
+
+    # 2. Collection of specific allowed points
+    GEOJSON allowed_nodes BEGIN
+        {
+            "type": "MultiPoint",
+            "coordinates": [
+                [2.3508, 48.8561],
+                [2.3510, 48.8562],
+                [2.3512, 48.8563]
+            ]
+        }
+    END POINT
+
+    # Apply it
+    CONNECTION ALLOW allowed_nodes
+END SECURITY

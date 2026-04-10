@@ -1,0 +1,18 @@
+SECURITY my_waf
+    ENGINE On
+    # Simple rule: block if "x-waf-test" header is "deny"
+    RULES DEFINE
+        RULE "REQUEST_HEADERS:x-waf-test" "@streq deny" "id:101,phase:1,deny,status:403"
+    END RULES
+
+    ON INTERRUPTED BEGIN
+        context.Set("X-WAF-Phase", "Blocked");
+    END ON
+END SECURITY
+
+HTTP 127.0.0.1:18292
+    SECURITY my_waf
+    GET "/test" BEGIN
+        context.SendString("Allowed");
+    END GET
+END HTTP

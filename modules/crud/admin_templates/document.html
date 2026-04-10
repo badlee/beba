@@ -1,0 +1,112 @@
+<div class="d-flex align-items-center justify-content-between mb-4">
+  <div class="d-flex align-items-center gap-3">
+    <a href="{{adminPrefix}}/collections/{{schemaSlug}}" 
+       hx-get="{{adminPrefix}}/collections/{{schemaSlug}}" 
+       hx-target="#main-content" 
+       hx-push-url="true"
+       class="btn btn-light rounded-circle d-flex align-items-center justify-content-center" style="width: 40px; height: 40px;">
+      <i class="bi bi-arrow-left"></i>
+    </a>
+    <h2 class="h4 mb-0 fw-bold text-truncate" style="max-width: 400px;">Document #{{docId}}</h2>
+  </div>
+  <div class="d-flex gap-2">
+    <button class="btn btn-outline-danger d-flex align-items-center gap-2 px-3 fw-semibold"
+      hx-delete="{{apiPrefix}}/{{schemaSlug}}/{{docId}}"
+      hx-confirm="Are you sure you want to delete this document? This cannot be undone."
+      hx-on::after-request="if(event.detail.successful) htmx.ajax('GET', '{{adminPrefix}}/collections/{{schemaSlug}}', {target:'#main-content', pushUrl:true})">
+      <i class="bi bi-trash"></i> Delete
+    </button>
+  </div>
+</div>
+
+<div class="row g-4">
+  <div class="col-12 col-xl-8">
+    <div class="card border-0 shadow-sm">
+      <div class="card-header border-0 pb-0 pt-4 px-4 bg-transparent d-flex justify-content-between">
+        <h5 class="fw-bold mb-0">Edit Document Data</h5>
+        <span class="badge bg-primary-subtle text-primary border border-primary-subtle px-3 py-1">JSON Format</span>
+      </div>
+      <div class="card-body p-4">
+        <form hx-put="{{apiPrefix}}/{{schemaSlug}}/{{docId}}"
+          hx-swap="none"
+          hx-on::after-request="if(event.detail.successful) showSaveToast()">
+          <div class="mb-4">
+            <label class="form-label small fw-bold text-muted mb-2">Content (JSON)</label>
+            <textarea name="data" class="form-control font-monospace p-3 bg-light-subtle" rows="18" style="font-size: 13px; border-radius: 10px;">{{docData}}</textarea>
+          </div>
+          <div class="mb-4">
+            <label class="form-label small fw-bold text-muted mb-2">Metadata / Options (JSON)</label>
+            <textarea name="meta" class="form-control font-monospace p-3 bg-light-subtle" rows="6" style="font-size: 13px; border-radius: 10px;">{{docMeta}}</textarea>
+          </div>
+          <div class="d-flex justify-content-end pt-2">
+            <button type="submit" class="btn btn-primary px-5 py-2 fw-bold shadow-sm">
+              <i class="bi bi-check2-circle me-2"></i> Save Changes
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12 col-xl-4">
+    <div class="card border-0 shadow-sm mb-4">
+      <div class="card-header border-0 pb-0 pt-4 px-4 bg-transparent">
+        <h5 class="fw-bold mb-0">System Information</h5>
+      </div>
+      <div class="card-body p-4">
+        <div class="list-group list-group-flush border-top-0">
+          <div class="list-group-item px-0 border-0 d-flex justify-content-between align-items-center">
+            <span class="text-muted small">Document ID</span>
+            <span class="badge bg-light text-dark border font-monospace">{{docId}}</span>
+          </div>
+          <div class="list-group-item px-0 border-0 d-flex justify-content-between align-items-center">
+            <span class="text-muted small">Collection</span>
+            <span class="fw-medium text-main text-capitalize">{{schemaSlug}}</span>
+          </div>
+          <div class="list-group-item px-0 border-0 d-flex justify-content-between align-items-center">
+            <span class="text-muted small">Created Date</span>
+            <span class="small text-main">{{docCreated}}</span>
+          </div>
+          <div class="list-group-item px-0 border-0 d-flex justify-content-between align-items-center">
+            <span class="text-muted small">Last Modified</span>
+            <span class="small text-main">{{docUpdated}}</span>
+          </div>
+        </div>
+        <div class="alert alert-info border-0 bg-info-subtle mt-4 mb-0 d-flex gap-3 align-items-start rounded-4">
+           <i class="bi bi-info-circle-fill text-info mt-1"></i>
+           <div class="small">Changes saved here are directly reflected in the database and broadcasted via SSE to connected clients.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function showSaveToast() {
+  // Use the global showToast function if it exists in layout.html
+  if (typeof window.showToast === 'function') {
+    window.showToast('update', '{{schemaSlug}}', '{{docId}}');
+  } else {
+    // Fallback if layout toast fails for some reason
+    const container = document.getElementById('toast-container');
+    if(container) {
+      const t = document.createElement('div');
+      t.className = 'toast show border-0 shadow-lg mb-2';
+      t.innerHTML = `
+        <div class="d-flex align-items-center gap-2 p-3">
+          <i class="bi bi-check-circle-fill text-success fs-5"></i>
+          <div>
+            <div class="fw-bold">Changes Saved</div>
+            <div class="tiny text-muted">Document #{{docId}} updated</div>
+          </div>
+        </div>
+      `;
+      container.appendChild(t);
+      setTimeout(() => {
+        t.style.animation = 'fadeOut 0.3s ease forwards';
+        setTimeout(() => t.remove(), 300);
+      }, 4000);
+    }
+  }
+}
+</script>

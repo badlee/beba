@@ -1,0 +1,8 @@
+# Referenced a pre-defined custom zone file
+SECURITY custom_zone_test
+    # The file path to the GeoJSON data (Feature/Collection)
+    GEOJSON office_perimeter "custom_zone.geojson"
+    
+    # Allow only connections from within this perimeter
+    CONNECTION ALLOW office_perimeter
+END SECURITY

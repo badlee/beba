@@ -1,0 +1,41 @@
+# Example: Unified Content Resolution (Binary & Text)
+# Test with:
+# curl -i http://127.0.0.1:9090/hex       -> "Hello"
+# curl -i http://127.0.0.1:9090/b64       -> "Hello"
+# curl -i http://127.0.0.1:9090/tpl       -> "Hi Test"
+# curl -i http://127.0.0.1:9090/js-obj    -> JSON object
+# curl -i http://127.0.0.1:9090/file-txt  -> Content of types.html
+
+HTTP 127.0.0.1:9090
+    SET USER_NAME "Test"
+
+    # 1. HEX Decoding (Auto-decoded by RouteConfig.Content)
+    GET "/hex" HEX text/plain BEGIN
+        48656c6c6f
+    END GET
+
+    # 2. BASE64 Decoding
+    GET "/b64" BASE64 text/plain BEGIN
+        SGVsbG8=
+    END GET
+
+    # 3. Inline Template (Mustache + settings)
+    GET "/tpl" TEMPLATE text/plain BEGIN
+        Hi {{USER_NAME}}
+    END GET
+
+    # 4. Inline JS Handler (Default type)
+    # Note: Content-Type text/html is auto-injected if not specified
+    GET "/js-obj" BEGIN
+        context.JSON({ status: "success", version: settings.APP_VERSION || "1.0" });
+    END GET
+
+    # 5. File-based Text Handler (Content loaded via Content())
+    GET "/file-txt" FILE "types.html" text/plain
+
+    # 6. Binary auto-detection (BINARY/BYTES)
+    GET "/auto-hex" BINARY image/png BEGIN
+        FFD8FFE000104A464946 # Truncated JPEG header example
+    END GET
+
+END HTTP

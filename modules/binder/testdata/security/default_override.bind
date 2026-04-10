@@ -1,0 +1,14 @@
+# Override global default with a custom one
+# Requires 'default' keyword after the security name
+SECURITY my_strict_default [default]
+    # Very strict: 2 requests per second, burst 1
+    CONNECTION RATE 2r/s 1s burst=1 mode=ip
+END SECURITY
+
+HTTP 127.0.0.1:0
+    # This server will use the 'my_strict_default' as its default
+    # If no SECURITY directive is found, the 'default' policy is used anyway
+    GET "/" BEGIN
+        context.SendString("override_ok");
+    END GET
+END HTTP

@@ -1,0 +1,7 @@
+# This server should inherit the built-in global default security
+# (CONNECTION RATE 100r/s 1m burst=10 mode=ip)
+HTTP 127.0.0.1:0
+    GET "/" BEGIN
+        context.SendString("baseline_ok");
+    END GET
+END HTTP

@@ -2,13 +2,13 @@ package console
 
 import (
 	"http-server/modules"
+	"http-server/processor"
 	"log"
 	"os"
 
 	"github.com/dop251/goja"
 	"github.com/dop251/goja_nodejs/util"
 	"github.com/fatih/color"
-	"github.com/gofiber/fiber/v3"
 )
 
 var (
@@ -77,20 +77,31 @@ func (c *Module) Name() string {
 func (c *Module) Doc() string {
 	return "Node.js console module"
 }
-
-func (c *Module) Loader(ctx fiber.Ctx, vm *goja.Runtime, module *goja.Object) {
+func (c *Module) ToJSObject(vm *goja.Runtime) goja.Value {
+	cObj := vm.NewObject()
+	c.Loader(nil, vm, cObj)
+	return cObj
+}
+func (c *Module) Loader(_ any, vm *goja.Runtime, moduleObject *goja.Object) {
+	// CommonJS support: if exports exists, use it as the target
+	module := moduleObject
+	if exp := moduleObject.Get("exports"); exp != nil && !goja.IsUndefined(exp) {
+		module = exp.ToObject(vm)
+	}
+	if c.printer == nil {
+		c.printer = defaultStdPrinter
+	}
 	cUtil := vm.NewObject()
 	c.runtime = vm
 
 	cUtil.Set("exports", vm.NewObject())
 	util.Require(vm, cUtil)
 	c.util = cUtil.Get("exports").(*goja.Object)
-	o := module.Get("exports").(*goja.Object)
-	o.Set("log", c.log(c.printer.Log))
-	o.Set("error", c.log(c.printer.Error))
-	o.Set("warn", c.log(c.printer.Warn))
-	o.Set("info", c.log(c.printer.Info))
-	o.Set("debug", c.log(c.printer.Debug))
+	module.Set("log", c.log(c.printer.Log))
+	module.Set("error", c.log(c.printer.Error))
+	module.Set("warn", c.log(c.printer.Warn))
+	module.Set("info", c.log(c.printer.Info))
+	module.Set("debug", c.log(c.printer.Debug))
 }
 func (c *Module) log(p func(string)) func(goja.FunctionCall) goja.Value {
 	return func(call goja.FunctionCall) goja.Value {
@@ -109,6 +120,7 @@ func (c *Module) log(p func(string)) func(goja.FunctionCall) goja.Value {
 	}
 }
 func init() {
+	processor.RegisterGlobal("console", &Module{})
 	modules.RegisterModule(&Module{
 		printer: defaultStdPrinter,
 	})

@@ -1,0 +1,9 @@
+# Referenced a pre-defined complex zone file
+# This file contains multiple polygons, points, and linestrings in a FeatureCollection.
+SECURITY complex_zone_test
+    # The file path to the comprehensive GeoJSON data
+    GEOJSON zones_of_interest "complex_zone.geojson"
+    
+    # Deny connections from any shape within this complex file
+    CONNECTION DENY zones_of_interest
+END SECURITY

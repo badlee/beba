@@ -1,0 +1,171 @@
+<div class="row g-4 mb-4">
+  <div class="col-6 col-md-3">
+    <div class="card h-100 p-3 text-center border-0 shadow-sm">
+      <div class="stat-icon mb-2 mx-auto d-flex align-items-center justify-content-center rounded-circle bg-primary-subtle text-primary" style="width: 48px; height: 48px;">
+        <i class="bi bi-collection fs-4"></i>
+      </div>
+      <div class="stat-value h2 fw-bold mb-0 text-primary">{{schemaCount}}</div>
+      <div class="stat-label text-muted small fw-medium">Collections</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card h-100 p-3 text-center border-0 shadow-sm">
+      <div class="stat-icon mb-2 mx-auto d-flex align-items-center justify-content-center rounded-circle bg-success-subtle text-success" style="width: 48px; height: 48px;">
+        <i class="bi bi-box-seam fs-4"></i>
+      </div>
+      <div class="stat-value h2 fw-bold mb-0 text-success">{{namespaceCount}}</div>
+      <div class="stat-label text-muted small fw-medium">Namespaces</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card h-100 p-3 text-center border-0 shadow-sm">
+      <div class="stat-icon mb-2 mx-auto d-flex align-items-center justify-content-center rounded-circle bg-warning-subtle text-warning" style="width: 48px; height: 48px;">
+        <i class="bi bi-people fs-4"></i>
+      </div>
+      <div class="stat-value h2 fw-bold mb-0 text-warning">{{userCount}}</div>
+      <div class="stat-label text-muted small fw-medium">Users</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card h-100 p-3 text-center border-0 shadow-sm">
+      <div class="stat-icon mb-2 mx-auto d-flex align-items-center justify-content-center rounded-circle bg-danger-subtle text-danger" style="width: 48px; height: 48px;">
+        <i class="bi bi-shield-lock fs-4"></i>
+      </div>
+      <div class="stat-value h2 fw-bold mb-0 text-danger">{{roleCount}}</div>
+      <div class="stat-label text-muted small fw-medium">Roles</div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-4">
+  <div class="col-12 col-xl-7">
+    <div class="card border-0 shadow-sm h-100">
+      <div class="card-header border-0 d-flex align-items-center justify-content-between pb-0">
+        <h5 class="mb-0 fw-bold">Collections</h5>
+        <a href="{{adminPrefix}}/collections" class="btn btn-sm btn-light text-primary fw-semibold">Manage All</a>
+      </div>
+      <div class="card-body">
+        <div class="row g-3">
+          <?js
+            var parsedSchemas = JSON.parse(settings.schemas || '[]') || [];
+            parsedSchemas.forEach(function(s) {
+              if (!s.color) s.color = '#4A6CF7';
+              if (!s.icon) s.icon = 'file-earmark-text';
+            });
+          ?>
+          {{#parsedSchemas}}
+          <div class="col-6 col-md-4">
+            <div class="card h-100 border-1 p-3 text-decoration-none transition-hover position-relative">
+              <a href="{{adminPrefix}}/collections/{{slug}}" 
+                 hx-get="{{adminPrefix}}/collections/{{slug}}" 
+                 hx-target="#main-content" 
+                 hx-push-url="true" 
+                 class="stretched-link"></a>
+              <div class="d-flex align-items-center justify-content-between mb-2 position-relative" style="z-index: 2;">
+                <div class="rounded-3 p-2 d-flex align-items-center justify-content-center" style="background-color: {{color}}22; color: {{color}};">
+                  <i class="bi bi-{{icon}}"></i>
+                </div>
+                <a href="{{adminPrefix}}/collections?edit={{id}}" 
+                   hx-get="{{adminPrefix}}/collections?edit={{id}}" 
+                   hx-target="#main-content" 
+                   hx-push-url="true"
+                   class="btn btn-sm btn-light p-1 rounded-2 shadow-sm" title="Edit Schema">
+                  <i class="bi bi-gear-fill text-muted" style="font-size: 10px;"></i>
+                </a>
+              </div>
+              <div class="fw-bold text-main text-truncate position-relative" style="font-size: 14px; z-index: 2;">{{name}}</div>
+              <div class="text-muted small position-relative" style="z-index: 2;">{{doc_count}} documents</div>
+            </div>
+          </div>
+          {{/parsedSchemas}}
+          {{^parsedSchemas}}
+          <div class="col-12 text-center py-5 text-muted">
+             <i class="bi bi-folder-x fs-1 opacity-25"></i>
+             <p class="mt-2">No collections found yet.</p>
+          </div>
+          {{/parsedSchemas}}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12 col-xl-5">
+    <div class="card border-0 shadow-sm h-100">
+      <div class="card-header border-0 pb-0">
+        <h5 class="mb-0 fw-bold">Recent Activity</h5>
+      </div>
+      <div class="card-body p-0">
+        <div class="activity-feed px-3" id="activity-feed">
+           <div class="text-center py-5 text-muted opacity-50">
+             <div class="spinner-grow spinner-grow-sm text-primary mb-2" role="status"></div>
+             <div class="small">Waiting for live events...</div>
+           </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+  .transition-hover {
+    transition: all 0.2s ease;
+  }
+  .transition-hover:hover {
+    transform: translateY(-3px);
+    border-color: var(--main-color) !important;
+    box-shadow: 0 5px 15px rgba(0,0,0,0.08) !important;
+  }
+  .activity-item {
+    display: flex;
+    gap: 15px;
+    padding: 15px 0;
+    border-bottom: 1px solid var(--border-color);
+  }
+  .activity-item:last-child {
+    border-bottom: none;
+  }
+  .activity-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-top: 5px;
+    flex-shrink: 0;
+  }
+</style>
+
+<script>
+document.addEventListener('crud-event', function(e) {
+  var d = e.detail;
+  var feed = document.getElementById('activity-feed');
+  if (!feed) return;
+  
+  // Clear waiting message
+  if (feed.querySelector('.opacity-50')) feed.innerHTML = '';
+
+  var item = document.createElement('div');
+  item.className = 'activity-item';
+  
+  var dotColor = 'bg-primary';
+  if(d.action === 'create') dotColor = 'bg-success';
+  if(d.action === 'update') dotColor = 'bg-warning';
+  if(d.action === 'delete') dotColor = 'bg-danger';
+
+  item.innerHTML = `
+    <div class="activity-dot ${dotColor} shadow-sm"></div>
+    <div class="flex-grow-1">
+      <div class="d-flex justify-content-between align-items-start">
+        <div class="small fw-medium text-main">
+          <span class="text-uppercase fw-bold tiny me-1 text-muted opacity-75">${d.action}</span>
+          <strong>${d.schema || d.namespace || 'System'}</strong>
+          <span class="text-muted ms-1 font-monospace">${d.id ? '#' + d.id.substring(0,8) : ''}</span>
+        </div>
+        <span class="text-muted tiny lh-1">${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+      </div>
+      <div class="text-muted tiny mt-1">Transaction processed successfully.</div>
+    </div>
+  `;
+  
+  feed.prepend(item);
+  if (feed.children.length > 20) feed.lastChild.remove();
+});
+</script>

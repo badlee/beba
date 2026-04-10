@@ -1,0 +1,44 @@
+# Test: SSL avec Let's Encrypt (ACME automatique)
+# Nécessite un vrai domaine et un accès réseau public pour le défi ACME.
+# En environnement local, le serveur démarrera mais le certificat ne sera pas émis.
+# Tester avec: curl -k https://your-real-domain.com/
+#
+# Commande de test en local pour vérifier le démarrage:
+#   ./http-server --bind-file examples/test_ssl_lets_encrypt.bind
+# (Vérifier que le serveur démarre sans erreur de parse sur port 443 et port 80 pour ACME)
+
+HTTPS 0.0.0.0:443
+    SSL AUTO your-domain.example.com admin@example.com
+
+    SET SERVER_NAME "LetsEncrypt-Test"
+    ENV SET ACME_EMAIL "admin@example.com"
+
+    GET "/" BEGIN
+        context.JSON({
+            ok: true,
+            server: settings.SERVER_NAME,
+            tls: "lets-encrypt"
+        });
+    END GET
+
+    GET "/health" BEGIN
+        context.SendString("OK");
+    END GET
+
+    ERROR 404 BEGIN
+        context.Status(404).SendString("Not Found – Let's Encrypt server");
+    END ERROR
+
+END HTTPS
+
+# Port 80 pour le défi ACME HTTP-01
+HTTP 0.0.0.0:80
+    GET /.well-known/acme-challenge/(.*) BEGIN
+        // Les défis ACME sont gérés automatiquement par le manager autocert
+        // Ce bloc est uniquement pour référence
+        context.SendString("ACME challenge handled by autocert manager");
+    END GET
+
+    # Rediriger tout le reste vers HTTPS
+    REDIRECT 301 /(.*) https://your-domain.example.com/$1
+END HTTP

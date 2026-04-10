@@ -1,0 +1,18 @@
+SECURITY geojson_multipolygon
+    # 1. MultiPolygon for disconnected areas (e.g. an archipelago or split city)
+    GEOJSON split_zones BEGIN
+        {
+            "type": "Feature",
+            "geometry": {
+                "type": "MultiPolygon",
+                "coordinates": [
+                    [[[0,0],[1,0],[1,1],[0,1],[0,0]]],
+                    [[[5,5],[6,5],[6,6],[5,6],[5,5]]]
+                ]
+            }
+        }
+    END POINT
+
+    # 2. Apply it
+    CONNECTION ALLOW split_zones
+END SECURITY

@@ -1,0 +1,226 @@
+/* ── PlainAdmin-inspired CSS for CRUD Admin ── */
+
+:root {
+  --main-color: #4A6CF7;
+  --sidebar-width: 260px;
+  --header-height: 70px;
+}
+
+/* ── Light Theme (Default) ── */
+[data-bs-theme="light"] {
+  --bg-body: #f4f7fe;
+  --bg-sidebar: #ffffff;
+  --bg-card: #ffffff;
+  --text-main: #2D2D2D;
+  --text-muted: #5D657B;
+  --border-color: #efefef;
+  --sidebar-item-active-bg: #4a6cf710;
+  --sidebar-item-active-color: #4A6CF7;
+}
+
+/* ── Dark Theme ── */
+[data-bs-theme="dark"] {
+  --bg-body: #090e34;
+  --bg-sidebar: #12194b;
+  --bg-card: #1c2454;
+  --text-main: #ffffff;
+  --text-muted: #a3a8b1;
+  --border-color: #2b335e;
+  --sidebar-item-active-bg: #4a6cf720;
+  --sidebar-item-active-color: #ffffff;
+}
+
+body {
+  font-family: 'Inter', sans-serif;
+  background-color: var(--bg-body);
+  color: var(--text-main);
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* ── Layout ── */
+.sidebar {
+  width: var(--sidebar-width);
+  height: 100vh;
+  position: fixed;
+  top: 0;
+  left: 0;
+  background-color: var(--bg-sidebar);
+  border-right: 1px solid var(--border-color);
+  z-index: 1000;
+  transition: transform 0.3s ease;
+  overflow-y: auto;
+}
+
+.main-content {
+  margin-left: var(--sidebar-width);
+  min-height: 100vh;
+  transition: margin-left 0.3s ease;
+}
+
+.header {
+  height: var(--header-height);
+  padding: 0 30px;
+  background-color: var(--bg-card);
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: sticky;
+  top: 0;
+  z-index: 999;
+}
+
+/* ── Sidebar ── */
+.sidebar-logo {
+  padding: 24px 30px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--main-color);
+}
+
+.sidebar-nav {
+  padding: 10px 15px;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 15px;
+  border-radius: 10px;
+  color: var(--text-muted);
+  font-weight: 500;
+  margin-bottom: 5px;
+  transition: all 0.2s ease;
+  text-decoration: none !important;
+}
+
+.nav-item:hover {
+  background-color: var(--sidebar-item-active-bg);
+  color: var(--main-color);
+}
+
+.nav-item.active {
+  background-color: var(--sidebar-item-active-bg);
+  color: var(--sidebar-item-active-color);
+}
+
+.nav-icon {
+  font-size: 18px;
+}
+
+/* ── Cards & UI ── */
+.card {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 15px;
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.05);
+  margin-bottom: 30px;
+  transition: background-color 0.3s ease, border-color 0.3s ease;
+}
+
+.card-header {
+  background: transparent;
+  border-bottom: 1px solid var(--border-color);
+  padding: 20px 25px;
+  font-weight: 600;
+}
+
+.table thead th {
+  background-color: transparent;
+  border-bottom: 2px solid var(--border-color);
+  color: var(--text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 12px;
+  letter-spacing: 1px;
+}
+
+.table td {
+  vertical-align: middle;
+  border-bottom: 1px solid var(--border-color);
+  padding: 15px 12px;
+}
+
+/* ── Theme Switcher ── */
+.theme-switcher {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.theme-btn {
+  background: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.theme-btn:hover {
+  border-color: var(--main-color);
+  color: var(--main-color);
+}
+
+.theme-btn.active {
+  background-color: var(--main-color);
+  color: #fff;
+  border-color: var(--main-color);
+}
+
+/* ── Toast ── */
+#toast-container {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 1060;
+}
+
+.toast {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  padding: 15px 20px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 250px;
+  animation: slideInUp 0.3s ease forwards;
+}
+
+@keyframes slideInUp {
+  from {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* ── Responsive ── */
+@media (max-width: 991px) {
+  .sidebar {
+    transform: translateX(-100%);
+  }
+
+  .sidebar.show {
+    transform: translateX(0);
+  }
+
+  .main-content {
+    margin-left: 0;
+  }
+}

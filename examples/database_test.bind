@@ -1,0 +1,56 @@
+DATABASE 'sqlite://:memory:' [default name=db]
+    SCHEMA user DEFINE
+        FIELD name string [required=true]
+        FIELD email string [required=true,unique=true]
+        FIELD age number
+        
+        VIRTUAL fullName BEGIN
+            name + ' <' + email + '>'
+        END VIRTUAL
+        
+        HOOK @PRE save BEGIN
+            console.log('JS: Preparing to save user: ' + name)
+        END HOOK
+        
+        METHOD greet BEGIN [s]
+            'Hello '+ s +' from ' + name
+        END METHOD
+        
+        STATIC findByEmail BEGIN [email] 
+            console.log('lookUp', email)
+            findOne({ email: email })
+        END STATIC
+    END SCHEMA
+END DATABASE
+
+## base par defaut a cause du nom de la base de donnee
+DATABASE 'file:/tmp/db2.sqlite' [name=data]
+    SCHEMA personne DEFINE
+        FIELD name string [required=true]
+        FIELD email string [required=true,unique=true]
+        FIELD age number
+        
+        VIRTUAL fullName BEGIN
+            name + ' <' + email + '>'
+        END VIRTUAL
+        
+        HOOK @PRE save BEGIN
+            console.log('JS: Preparing to save user: ' + name)
+        END HOOK
+        
+        METHOD greet BEGIN [s]
+            'Hello '+ s +' from ' + name
+        END METHOD
+        
+        STATIC findByEmail BEGIN [email] 
+            console.log('lookUp', email)
+            findOne({ email: email })
+        END STATIC
+    END SCHEMA
+END DATABASE
+
+HTTP :8084
+    GET /test BEGIN BEGIN
+        INCLUDE test.js
+    END GET
+END HTTP

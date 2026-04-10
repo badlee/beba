@@ -1,0 +1,16 @@
+SECURITY geojson_mixed
+    # 1. GeometryCollection - allows mixing different types together
+    GEOJSON office_campus BEGIN
+        {
+            "type": "GeometryCollection",
+            "geometries": [
+                { "type": "Point", "coordinates": [2.3, 48.8] },
+                { "type": "LineString", "coordinates": [[2.2, 48.7], [2.4, 48.9]] },
+                { "type": "Polygon", "coordinates": [[[2,48],[3,48],[3,49],[2,49],[2,48]]] }
+            ]
+        }
+    END POINT
+
+    # Apply it
+    CONNECTION ALLOW office_campus
+END SECURITY

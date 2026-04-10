@@ -1,0 +1,10 @@
+# API Routes
+# This file is included in the main binder configuration
+
+GET "/api/v1/status" BEGIN
+    context.JSON({ status: "ok", version: settings.API_VERSION });
+END GET
+
+POST "/api/v1/echo" BEGIN
+    context.JSON(context.Body());
+END POST

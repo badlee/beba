@@ -1,0 +1,15 @@
+TCP 0.0.0.0:8091
+    AUTH CSV "examples/devices.csv"
+
+    DTP
+        DATA "SENSOR_DATA" BEGIN
+            print(`[DTP_SERVER] Données capteur de ${device.DeviceID}: ${payload}`);
+        END DATA
+
+        CMD 0x01 BEGIN
+            print(`[DTP_SERVER] Commande 0x01 de ${device.DeviceID}`);
+        END CMD
+
+        ONLINE
+    END DTP
+END TCP

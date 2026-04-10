@@ -1,0 +1,11 @@
+SECURITY rate_limit_advanced
+    # Rate Limit of 100 requests per minute with a burst of 50
+    CONNECTION RATE 100r/m 1m burst=50 mode=ip
+END SECURITY
+
+TCP 127.0.0.1:0
+    SECURITY rate_limit_advanced
+    DATA BEGIN
+        context.SendString("rate_limit_ok\n");
+    END DATA
+END TCP

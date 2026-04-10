@@ -1,0 +1,39 @@
+// Exemple de démonstration de la nouvelle fonctionnalité de GROUPES DE ROUTES
+// Les groupes permettent d'imbriquer des routes HTTP sous un préfixe commun
+// et de leur appliquer des middlewares partagés.
+
+HTTP 0.0.0.0:8080
+    // Un groupe simple /api avec un middleware CORS par défaut
+    GROUP /api DEFINE
+        
+        // Sous-groupe /v1 avec un Custom Middleware
+        GROUP @LIMITER[max=5 expiration=30s] /v1 DEFINE
+            
+            // Accessible via GET /api/v1/users
+            GET /users BEGIN
+                res.json([{id: 1, name: "Alice"}, {id: 2, name: "Bob"}]);
+            END GET
+            
+            // Accessible via POST /api/v1/users
+            POST @ADMIN[message="Format incorrect"] /users BEGIN
+                print("Création d'utilisateur", req.body());
+                done({status: "created"});
+            END POST
+            
+        END GROUP
+
+        // Sous-groupe /v2 (Nouvelle version API)
+        GROUP /v2 DEFINE
+            GET /users BEGIN
+                res.json([{id: 1, name: "Alice", role: "admin"}]);
+            END GET
+        END GROUP
+        
+    END GROUP
+
+    // Les routes hors-groupe fonctionnent normalement
+    GET / BEGIN
+        print("Bienvenue sur le serveur principal");
+    END GET
+
+END HTTP

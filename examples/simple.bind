@@ -1,0 +1,7 @@
+HTTP 127.0.0.1:8181
+    GET "/" HANDLER "Binder Works"
+    STATIC "/public" "."
+    GET "/hello" BEGIN
+        return c.SendString("Hello from Inline!");
+    END GET
+END HTTP

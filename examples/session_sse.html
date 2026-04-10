@@ -18,10 +18,10 @@
         const session = new Session(cookies);
         var sessionID = session.id;
 
-        // Link SSE to this session
+        // Attach the current connection context to this unique session ID
         sse.attach(session.id);
 
-        // Send a private message (this is now deferred)
+        // Send a private message directly to this client via the Sharded Hub ('sid:<id>' channel)
         sse.send("private", "1. Welcome back! This is a private message for your session only.");
         sse.send("private", "2. Welcome back! This is a private message for your session only.");
 

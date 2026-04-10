@@ -9,64 +9,248 @@ import (
 	"regexp"
 	"strings"
 
+	"http-server/plugins/config"
 	"http-server/plugins/require"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/cbroglie/mustache"
 	"github.com/dop251/goja"
+	"github.com/dop251/goja_nodejs/buffer"
+	coreRequire "github.com/dop251/goja_nodejs/require"
 	"github.com/gofiber/fiber/v3"
-
-	"http-server/modules/sse"
 )
 
-func init() {
+var globalObject map[string]require.ModuleLoader
 
-}
+func New(dir string, c fiber.Ctx, cfg *config.AppConfig) *goja.Runtime {
+	var registry *require.Registry
 
-// ProcessFile reads a file, executes embedded JS, and renders Mustache
-func ProcessFile(path string, c fiber.Ctx, sseManager *sse.Manager) (string, error) {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	c.Locals("sseManager", sseManager)
-	dir := filepath.Dir(path)
-
-	var registry = require.NewRegistry(
+	registry = require.NewRegistry(
 		require.WithInstance(c),
-		require.WithLoader[fiber.Ctx](func(path string) ([]byte, error) {
+		require.WithLoader(func(path string) ([]byte, error) {
 			return os.ReadFile(filepath.Join(dir, path))
 		}),
-		require.WithGlobalFolders[fiber.Ctx]("node_modules", "js_modules"),
-		require.WithPathResolver[fiber.Ctx](func(base, path string) string {
+		require.WithGlobalFolders("libs", "modules", "js_modules", "node_modules"),
+		require.WithPathResolver(func(base, path string) string {
 			return filepath.Join(base, path)
 		}),
 	) // this can be shared by multiple runtimes
+
 	vm := goja.New()
+
+	new(coreRequire.Registry).Enable(vm)
+	buffer.Enable(vm)
+
 	modules.Register(registry) // attache all modules
 	registry.Enable(vm)
-	// buffer.Enable(vm)
+	AttachGlobals(vm)
+
+	// Shim process.env
+	process := vm.NewObject()
+	env := vm.NewObject()
+	for _, e := range os.Environ() {
+		pair := strings.SplitN(e, "=", 2)
+		if len(pair) == 2 {
+			env.Set(pair[0], pair[1])
+		}
+	}
+	process.Set("env", env)
+	vm.Set("process", process)
 
 	// Capture print output if needed?
 	// For parity with some PHP-like envs, print output goes to output.
 	// We can implement a rudimentary output buffer.
 	var outputBuffer strings.Builder
 	vm.Set("print", func(call goja.FunctionCall) goja.Value {
-		for _, arg := range call.Arguments {
-			outputBuffer.WriteString(fmt.Sprint(arg.Export()))
+		out := ""
+		for i, arg := range call.Arguments {
+			if i > 0 {
+				out += " "
+			}
+			out += fmt.Sprint(arg.Export())
 		}
+		outputBuffer.WriteString(out)
+		outputBuffer.WriteString("\n")
+		// Also print to stdout for debugging/logs if not a standard fiber request
+		// (standard fiber requests use outputBuffer for template injection)
+		fmt.Println(out)
 		return goja.Undefined()
 	})
-
-	vm.Set("include", func(call goja.FunctionCall) goja.Value {
-		file := call.Argument(0).String()
-		fullPath := filepath.Join(dir, file)
-		res, err := ProcessFile(fullPath, c, sseManager)
-		if err != nil {
-			return vm.ToValue(fmt.Sprintf("Include Error: %v", err))
-		}
-		return vm.ToValue(res)
+	vm.Set("__output", func() string {
+		return outputBuffer.String()
 	})
+	if c != nil {
+		vm.Set("context", c) // Expose context
+
+		// Expose Locals to JS
+		localsObj := vm.NewObject()
+		vm.Set("Locals", localsObj)
+		// For Mustache compatibility and ease of use, we can't easily iterate all locals in Fiber v3
+		// but we can proxy them if we use a helper.
+		// For now, let's manually expose known important ones and provide a getter.
+		vm.Set("getLocals", func(key string) any {
+			return c.Locals(key)
+		})
+
+		// Exposer les variables de routage FsRouter
+		if params, ok := c.Locals("_fsrouter_params").(map[string]string); ok {
+			paramsObj := vm.NewObject()
+			for k, v := range params {
+				paramsObj.Set(k, v)
+			}
+			vm.Set("params", paramsObj)
+		}
+		if catchall, ok := c.Locals("_fsrouter_catchall").(string); ok {
+			vm.Set("catchall", catchall)
+		}
+
+		// Map specific common locals for templates (content, errorCode, errorMessage)
+		for _, key := range []string{"content", "errorCode", "errorMessage"} {
+			if val := c.Locals(key); val != nil {
+				vm.Set(key, val)
+				localsObj.Set(key, val) // Also set in Locals object
+			}
+		}
+
+		// Allow JS to throw specific fiber errors that the Binder ERROR block can catch
+		vm.Set("throwError", func(code int, msg string) goja.Value {
+			err := fiber.NewError(code, string(msg))
+			panic(vm.ToValue(err.Error() + fmt.Sprintf("::__FIBER_ERROR__%d", code)))
+		})
+		if cfg != nil {
+			vm.Set("include", func(call goja.FunctionCall) goja.Value {
+				file := call.Argument(0).String()
+				fullPath := filepath.Join(dir, file)
+				res, err := ProcessFile(fullPath, c, cfg)
+				if err != nil {
+					return vm.ToValue(fmt.Sprintf("Include Error: %v", err))
+				}
+				return vm.ToValue(res)
+			})
+		}
+	} else {
+		vm.Set("include", func(call goja.FunctionCall) goja.Value {
+			file := call.Argument(0).String()
+			fullPath := filepath.Join(dir, file)
+			content, err := os.ReadFile(fullPath)
+			if err != nil {
+				vm.Interrupt(vm.NewGoError(fmt.Errorf("Include Error: %v", err)))
+			} else {
+				_, err = vm.RunString(string(content))
+				if err != nil {
+					vm.Interrupt(vm.NewGoError(fmt.Errorf("Include Error: %v", err)))
+				}
+			}
+			return vm.ToValue(nil)
+		})
+	}
+
+	return vm
+}
+
+// ProcessString renders a template string with embedded JS and Mustache.
+// settings (optional) will be injected as the global `settings` object.
+func Process(content []byte, dir string, c fiber.Ctx, cfg *config.AppConfig, settings ...map[string]string) ([]byte, error) {
+	vm := New(dir, c, cfg)
+
+	// Inject settings if provided
+	if len(settings) > 0 && settings[0] != nil {
+		settingsObj := vm.NewObject()
+		for k, v := range settings[0] {
+			settingsObj.Set(k, v)
+		}
+		vm.Set("settings", settingsObj)
+	}
+
+	// Remove HTML comments
+	reComments := regexp.MustCompile(`(?s)<!--.*?-->`)
+	cleanContent := reComments.ReplaceAll(content, nil)
+
+	processedContent, err := executeJS(vm, string(cleanContent), dir)
+	if err != nil {
+		return nil, err
+	}
+
+	// Prepare context for Mustache
+	data := make(map[string]interface{})
+	for _, k := range vm.GlobalObject().Keys() {
+		if k == "db" || k == "require" || k == "console" || k == "sse" || k == "include" || k == "print" || k == "settings" || k == "config" {
+			continue
+		}
+		val := vm.GlobalObject().Get(k)
+		if val != nil {
+			data[k] = exportRecursive(vm, val)
+		}
+	}
+
+	res, err := mustache.Render(processedContent, data)
+	if err != nil {
+		return nil, err
+	}
+	return []byte(res), nil
+}
+
+// ProcessString renders a template string with embedded JS and Mustache.
+// settings (optional) will be injected as the global `settings` object.
+func ProcessString(content string, dir string, c fiber.Ctx, cfg *config.AppConfig, settings ...map[string]string) (string, error) {
+	vm := New(dir, c, cfg)
+
+	// Inject settings if provided
+	if len(settings) > 0 && settings[0] != nil {
+		settingsObj := vm.NewObject()
+		for k, v := range settings[0] {
+			settingsObj.Set(k, v)
+		}
+		vm.Set("settings", settingsObj)
+	}
+
+	// Remove HTML comments
+	reComments := regexp.MustCompile(`(?s)<!--.*?-->`)
+	cleanContent := reComments.ReplaceAllString(content, "")
+
+	processedContent, err := executeJS(vm, cleanContent, dir)
+	if err != nil {
+		return "", err
+	}
+
+	// Prepare context for Mustache
+	data := make(map[string]interface{})
+	if len(settings) > 0 {
+		for k, v := range settings[0] {
+			data[k] = v
+		}
+	}
+	for _, k := range vm.GlobalObject().Keys() {
+		if k == "db" || k == "require" || k == "console" || k == "sse" || k == "include" || k == "print" || k == "settings" || k == "config" {
+			continue
+		}
+		val := vm.GlobalObject().Get(k)
+		if val != nil {
+			data[k] = exportRecursive(vm, val)
+		}
+	}
+
+	return mustache.Render(processedContent, data)
+}
+
+// ProcessFile reads a file, executes embedded JS, and renders Mustache
+func ProcessFile(path string, c fiber.Ctx, cfg *config.AppConfig, settings ...map[string]string) (string, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Dir(path)
+
+	vm := New(dir, c, cfg)
+
+	// Inject settings if provided
+	if len(settings) > 0 && settings[0] != nil {
+		settingsObj := vm.NewObject()
+		for k, v := range settings[0] {
+			settingsObj.Set(k, v)
+		}
+		vm.Set("settings", settingsObj)
+	}
 
 	// Remove HTML comments before processing
 	reComments := regexp.MustCompile(`(?s)<!--.*?-->`)
@@ -79,9 +263,14 @@ func ProcessFile(path string, c fiber.Ctx, sseManager *sse.Manager) (string, err
 
 	// Prepare context for Mustache
 	data := make(map[string]interface{})
+	if len(settings) > 0 {
+		for k, v := range settings[0] {
+			data[k] = v
+		}
+	}
 	for _, k := range vm.GlobalObject().Keys() {
 		// Skip known modules/internals to avoid stringify issues
-		if k == "db" || k == "require" || k == "console" || k == "sse" || k == "include" || k == "print" {
+		if k == "db" || k == "require" || k == "console" || k == "sse" || k == "include" || k == "print" || k == "settings" || k == "config" {
 			continue
 		}
 		val := vm.GlobalObject().Get(k)
@@ -104,7 +293,7 @@ func ProcessFile(path string, c fiber.Ctx, sseManager *sse.Manager) (string, err
 	// Looking in the file's directory
 	provider := &mustache.FileProvider{
 		Paths:      []string{filepath.Dir(path)},
-		Extensions: []string{".html", ".mustache", ".js", ".htm"},
+		Extensions: []string{".html", ".mustache", ".tmpl", ".htm"},
 	}
 
 	rendered, err := mustache.RenderPartials(processedContent, provider, data)
@@ -112,11 +301,8 @@ func ProcessFile(path string, c fiber.Ctx, sseManager *sse.Manager) (string, err
 		return "", err
 	}
 
-	// Flush any pending SSE events
-	defer sse.Flush(c)
-
 	// Final step: Inject HTMX if it's a full HTML document
-	return injectHTMX(rendered), nil
+	return injectHTMX(rendered, cfg), nil
 }
 
 func exportRecursive(vm *goja.Runtime, val goja.Value) interface{} {
@@ -158,7 +344,11 @@ func exportRecursive(vm *goja.Runtime, val goja.Value) interface{} {
 	return result
 }
 
-func injectHTMX(content string) string {
+func injectHTMX(content string, cfg *config.AppConfig) string {
+	// Check if this looks like a full page (presence of <html> tag)
+	if !strings.Contains(strings.ToLower(content), "<html") {
+		return content
+	}
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(content))
 	if err != nil {
 		return content
@@ -171,27 +361,27 @@ func injectHTMX(content string) string {
 		return content
 	}
 
-	// Check if this looks like a full page (presence of <html> tag)
-	// We want to inject only if it's a full document
-	if strings.Contains(strings.ToLower(content), "<html") {
-		htmxScript := `<script src="https://unpkg.com/htmx.org@2.0.0"></script>`
-		head := doc.Find("head")
-		if head.Length() > 0 {
-			head.AppendHtml(htmxScript)
-		} else {
-			body := doc.Find("body")
-			if body.Length() > 0 {
-				body.PrependHtml(htmxScript)
-			} else {
-				// Fallback: append to html
-				htmlTag.AppendHtml(htmxScript)
-			}
-		}
-		res, _ := doc.Html()
-		return res
+	htmxScript := ""
+	if !cfg.NoHtmx {
+		htmxScript = fmt.Sprintf("\n<!-- HTMX -->\n<script src=\"%s\"></script>\n<!-- End HTMX -->\n", cfg.HtmxURL)
 	}
-
-	return content
+	if cfg.InjectHTML != "" {
+		htmxScript += fmt.Sprintf("\n<!-- Inject HTML -->\n%s\n<!-- End Inject HTML -->\n", cfg.InjectHTML)
+	}
+	head := doc.Find("head")
+	if head.Length() > 0 {
+		head.AppendHtml(htmxScript)
+	} else {
+		body := doc.Find("body")
+		if body.Length() > 0 {
+			body.PrependHtml(htmxScript)
+		} else {
+			// Fallback: append to html
+			htmlTag.AppendHtml(htmxScript)
+		}
+	}
+	res, _ := doc.Html()
+	return res
 }
 
 // executeJS parses <?js ... ?>, <?= ... ?>, and <script server ...> in sequence

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"encoding/json"
 	"fmt"
 	"http-server/modules"
 	"log"
@@ -10,18 +11,32 @@ import (
 	"strings"
 	"time"
 
-	"http-server/plugins/surrealdb-embedded"
-
 	"github.com/dop251/goja"
 	"github.com/gofiber/fiber/v3"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+
+	_ "modernc.org/sqlite"
 )
 
 var (
-	persistentDB *surrealdb.DB
-	volatileDB   *surrealdb.DB
+	persistentDB *gorm.DB
+	volatileDB   *gorm.DB
 )
+
+type StorageItem struct {
+	Name      string    `gorm:"primaryKey"`
+	SessionID string    `gorm:"primaryKey;column:session_id"`
+	TTL       time.Time `gorm:"column:ttl"`
+	Value     string    `gorm:"type:text"` // JSON encoded
+}
+
+func (StorageItem) TableName() string {
+	return "storage_items"
+}
 
 const SessionTTL = "3h"
 
@@ -35,7 +50,14 @@ func (s *Module) Doc() string {
 	return "Session and Cache module using SurrealDB"
 }
 
-func (s *Module) Loader(ctx fiber.Ctx, vm *goja.Runtime, module *goja.Object) {
+func (s *Module) Loader(c any, vm *goja.Runtime, moduleObject *goja.Object) {
+	// CommonJS support: if exports exists, use it as the target
+	module := moduleObject
+	if exp := moduleObject.Get("exports"); exp != nil && !goja.IsUndefined(exp) {
+		module = exp.ToObject(vm)
+	}
+
+	ctx, _ := c.(fiber.Ctx)
 	var (
 		jwtSecret          = []byte("secret")
 		jwtSigningMethod   = jwt.SigningMethodHS256
@@ -45,13 +67,16 @@ func (s *Module) Loader(ctx fiber.Ctx, vm *goja.Runtime, module *goja.Object) {
 		sessionQueryNames  = []string{"sid"}
 	)
 	// Expose the API
-	o := module.Get("exports").(*goja.Object)
+	o := module
 	o.Set("config", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) == 0 {
+			return goja.Undefined()
+		}
 		opts := call.Argument(0).ToObject(vm)
-		if v := opts.Get("jwtSecret"); !goja.IsUndefined(v) {
+		if v := opts.Get("jwtSecret"); v != nil && !goja.IsUndefined(v) {
 			jwtSecret = []byte(v.String())
 		}
-		if v := opts.Get("jwtSigningMethod"); !goja.IsUndefined(v) {
+		if v := opts.Get("jwtSigningMethod"); v != nil && !goja.IsUndefined(v) {
 			methodName := strings.ToUpper(v.String())
 			switch methodName {
 			case "HS256":
@@ -62,7 +87,7 @@ func (s *Module) Loader(ctx fiber.Ctx, vm *goja.Runtime, module *goja.Object) {
 				jwtSigningMethod = jwt.SigningMethodHS512
 			}
 		}
-		if v := opts.Get("jwtCookieNames"); !goja.IsUndefined(v) {
+		if v := opts.Get("jwtCookieNames"); v != nil && !goja.IsUndefined(v) {
 			if arr, ok := v.Export().([]interface{}); ok {
 				jwtCookieNames = make([]string, len(arr))
 				for i, x := range arr {
@@ -70,7 +95,7 @@ func (s *Module) Loader(ctx fiber.Ctx, vm *goja.Runtime, module *goja.Object) {
 				}
 			}
 		}
-		if v := opts.Get("jwtQueryNames"); !goja.IsUndefined(v) {
+		if v := opts.Get("jwtQueryNames"); v != nil && !goja.IsUndefined(v) {
 			if arr, ok := v.Export().([]interface{}); ok {
 				jwtQueryNames = make([]string, len(arr))
 				for i, x := range arr {
@@ -78,7 +103,7 @@ func (s *Module) Loader(ctx fiber.Ctx, vm *goja.Runtime, module *goja.Object) {
 				}
 			}
 		}
-		if v := opts.Get("sessionCookieNames"); !goja.IsUndefined(v) {
+		if v := opts.Get("sessionCookieNames"); v != nil && !goja.IsUndefined(v) {
 			if arr, ok := v.Export().([]interface{}); ok {
 				sessionCookieNames = make([]string, len(arr))
 				for i, x := range arr {
@@ -86,7 +111,7 @@ func (s *Module) Loader(ctx fiber.Ctx, vm *goja.Runtime, module *goja.Object) {
 				}
 			}
 		}
-		if v := opts.Get("sessionQueryNames"); !goja.IsUndefined(v) {
+		if v := opts.Get("sessionQueryNames"); v != nil && !goja.IsUndefined(v) {
 			if arr, ok := v.Export().([]interface{}); ok {
 				sessionQueryNames = make([]string, len(arr))
 				for i, x := range arr {
@@ -430,289 +455,224 @@ func (s *Module) Loader(ctx fiber.Ctx, vm *goja.Runtime, module *goja.Object) {
 		return nil // constructors return this by default if returning nil
 	})
 
-	module.Set("exports", o) // Export Session constructor as default
 }
 
-func (s *Module) createStoreObject(vm *goja.Runtime, db *surrealdb.DB, tableName string, sessionID string) *goja.Object {
+func (s *Module) createStoreObject(vm *goja.Runtime, db *gorm.DB, tableName string, sessionID string) *goja.Object {
 	obj := vm.NewObject()
 
-	// Helper to run query with TTL update
-	run := func(query string, params map[string]interface{}) (interface{}, error) {
-		res, err := db.Query(strings.TrimSpace(query), params)
+	// Helper to get item
+	getItem := func(key string) (*StorageItem, error) {
+		if db == nil {
+			return nil, fmt.Errorf("database not initialized")
+		}
+		var item StorageItem
+		err := db.Where("session_id = ? AND name = ?", sessionID, key).First(&item).Error
 		if err != nil {
 			return nil, err
 		}
-
-		if sessionID != "@" && sessionID != "#" {
-			// Update expiration on every access (sliding window)
-			ttlQ := fmt.Sprintf("UPDATE %s:%s SET expires_at = time::now() + %s", tableName, sessionID, SessionTTL)
-			db.Query(ttlQ, nil)
+		// Check expiry
+		if time.Now().After(item.TTL) {
+			db.Delete(&item) // Auto-cleanup on access
+			return nil, gorm.ErrRecordNotFound
 		}
-
-		if len(res) > 0 {
-			return res[0], nil
-		}
-		return nil, nil
+		// Slide window
+		ttlDuration, _ := time.ParseDuration(SessionTTL)
+		item.TTL = time.Now().Add(ttlDuration)
+		db.Save(&item) // Update TTL
+		return &item, nil
 	}
 
-	// NUM operations: /, +, -, *, %, ~/
+	// Helper to set item
+	setItem := func(key string, val interface{}) error {
+		if db == nil {
+			return fmt.Errorf("database not initialized")
+		}
+		jsonVal, err := json.Marshal(val)
+		if err != nil {
+			return err
+		}
+		ttlDuration, _ := time.ParseDuration(SessionTTL)
+		item := StorageItem{
+			Name:      key,
+			SessionID: sessionID,
+			TTL:       time.Now().Add(ttlDuration),
+			Value:     string(jsonVal),
+		}
+		return db.Save(&item).Error
+	}
+
+	// Helper to extract value (JSON decode)
+	extract := func(item *StorageItem) interface{} {
+		if item == nil {
+			return nil
+		}
+		var val interface{}
+		json.Unmarshal([]byte(item.Value), &val)
+		return val
+	}
+
+	// NUM operations
 	num := vm.NewObject()
 	obj.Set("num", num)
 
-	genericGet := func(call goja.FunctionCall) goja.Value {
+	num.Set("get", func(call goja.FunctionCall) goja.Value {
 		key := call.Argument(0).String()
-		q := fmt.Sprintf("SELECT %s as val FROM %s:%s", key, tableName, sessionID)
-		res, _ := run(q, nil)
-		return vm.ToValue(extractVal(res))
-	}
+		item, _ := getItem(key)
+		return vm.ToValue(extract(item))
+	})
 
-	num.Set("get", genericGet)
-
-	setNumOp := func(name string, op string) {
+	setNumOp := func(name string, op func(float64, float64) float64) {
 		num.Set(name, func(call goja.FunctionCall) goja.Value {
 			key := call.Argument(0).String()
 			val := call.Argument(1).ToFloat()
 
-			q := fmt.Sprintf("UPDATE %s:%s SET %s %s= $val", tableName, sessionID, key, op)
-			if op == "/" || op == "*" || op == "%" {
-				q = fmt.Sprintf("UPDATE %s:%s SET %s = (%s ?? 0) %s $val", tableName, sessionID, key, key, op)
-			}
-			if op == "~/" { // Floor div
-				q = fmt.Sprintf("UPDATE %s:%s SET %s = math::floor((%s ?? 0) / $val)", tableName, sessionID, key, key)
+			// Get current
+			item, _ := getItem(key)
+			current := 0.0
+			if item != nil {
+				v := extract(item)
+				if f, ok := v.(float64); ok {
+					current = f
+				} else if i, ok := v.(int64); ok {
+					current = float64(i)
+				}
 			}
 
-			res, err := run(q, map[string]interface{}{"val": val})
-			if err != nil {
-				panic(vm.ToValue(fmt.Sprintf("SessionError: %v", err)))
-			}
-			// Return updated value
-			if m, ok := res.(map[string]interface{}); ok {
-				return vm.ToValue(m[key])
-			}
-			return goja.Undefined()
+			// Calc new
+			newVal := op(current, val)
+			setItem(key, newVal)
+			return vm.ToValue(newVal)
 		})
 	}
 
-	setNumOp("add", "+")
-	num.Set("incr", num.Get("add"))
-	setNumOp("sub", "-")
-	num.Set("decr", num.Get("sub"))
-	setNumOp("mul", "*")
-	setNumOp("div", "/")
-	setNumOp("mod", "%")
-	setNumOp("divInt", "~/")
+	setNumOp("incr", func(a, b float64) float64 { return a + b })
+	setNumOp("decr", func(a, b float64) float64 { return a - b })
+	setNumOp("mul", func(a, b float64) float64 { return a * b })
+	setNumOp("div", func(a, b float64) float64 { return a / b })
+	setNumOp("mod", func(a, b float64) float64 { return float64(int(a) % int(b)) })
+	setNumOp("divInt", func(a, b float64) float64 { return float64(int(a) / int(b)) })
+
+	// Aliases
+	num.Set("add", num.Get("incr"))
+	num.Set("sub", num.Get("decr"))
 
 	num.Set("defined", func(call goja.FunctionCall) goja.Value {
 		key := call.Argument(0).String()
-		q := fmt.Sprintf("SELECT %s != NONE as val FROM %s:%s", key, tableName, sessionID)
-		res, _ := run(q, nil)
-		return vm.ToValue(extractVal(res))
+		item, _ := getItem(key)
+		return vm.ToValue(item != nil)
 	})
 
 	num.Set("define", func(call goja.FunctionCall) goja.Value {
 		key := call.Argument(0).String()
 		val := call.Argument(1).ToFloat()
-		q := fmt.Sprintf("UPDATE %s:%s SET %s = %s ?? $val", tableName, sessionID, key, key)
-		run(q, map[string]interface{}{"val": val})
+		item, _ := getItem(key)
+		if item == nil {
+			setItem(key, val)
+		}
 		return goja.Undefined()
 	})
 
 	num.Set("undefine", func(call goja.FunctionCall) goja.Value {
 		key := call.Argument(0).String()
-		q := fmt.Sprintf("UPDATE %s:%s SET %s = NONE", tableName, sessionID, key)
-		run(q, nil)
+		if db != nil {
+			db.Where("session_id = ? AND name = ?", sessionID, key).Delete(&StorageItem{})
+		}
 		return goja.Undefined()
 	})
 
 	num.Set("undefined", func(call goja.FunctionCall) goja.Value {
 		key := call.Argument(0).String()
-		q := fmt.Sprintf("SELECT %s == NONE as val FROM %s:%s", key, tableName, sessionID)
-		res, _ := run(q, nil)
-		return vm.ToValue(extractVal(res))
+		item, _ := getItem(key)
+		return vm.ToValue(item == nil)
 	})
 
-	// LIST operations: +(push), -(pop), ^+(shift), ^-(unshift), MIN, MAX, COUNT, SUM, AVG
+	// LIST operations
 	list := vm.NewObject()
 	obj.Set("list", list)
-
-	list.Set("get", genericGet)
+	list.Set("get", func(call goja.FunctionCall) goja.Value {
+		key := call.Argument(0).String()
+		item, _ := getItem(key)
+		return vm.ToValue(extract(item))
+	})
 
 	list.Set("push", func(call goja.FunctionCall) goja.Value {
 		key := call.Argument(0).String()
 		val := call.Argument(1).Export()
-		q := fmt.Sprintf("UPDATE %s:%s SET %s += [$val]", tableName, sessionID, key)
-		run(q, map[string]interface{}{"val": val})
+		item, _ := getItem(key)
+		var arr []interface{}
+		if item != nil {
+			res := extract(item)
+			if a, ok := res.([]interface{}); ok {
+				arr = a
+			}
+		}
+		arr = append(arr, val)
+		setItem(key, arr)
 		return goja.Undefined()
 	})
 
 	list.Set("pop", func(call goja.FunctionCall) goja.Value {
 		key := call.Argument(0).String()
-		q := fmt.Sprintf("UPDATE %s:%s SET %s = %s[..-1]", tableName, sessionID, key, key)
-		run(q, nil)
+		item, _ := getItem(key)
+		var arr []interface{}
+		if item != nil {
+			res := extract(item)
+			if a, ok := res.([]interface{}); ok {
+				arr = a
+			}
+		}
+		if len(arr) > 0 {
+			arr = arr[:len(arr)-1]
+		}
+		setItem(key, arr)
 		return goja.Undefined()
 	})
 
-	list.Set("shift", func(call goja.FunctionCall) goja.Value {
-		key := call.Argument(0).String()
-		q := fmt.Sprintf("UPDATE %s:%s SET %s = %s[1..]", tableName, sessionID, key, key)
-		run(q, nil)
-		return goja.Undefined()
-	})
-
-	list.Set("unshift", func(call goja.FunctionCall) goja.Value {
-		key := call.Argument(0).String()
-		val := call.Argument(1).Export()
-		q := fmt.Sprintf("UPDATE %s:%s SET %s = [$val] + (%s ?? [])", tableName, sessionID, key, key)
-		run(q, map[string]interface{}{"val": val})
-		return goja.Undefined()
-	})
-
-	list.Set("min", func(call goja.FunctionCall) goja.Value {
-		key := call.Argument(0).String()
-		q := fmt.Sprintf("SELECT math::min(%s) as val FROM %s:%s", key, tableName, sessionID)
-		res, _ := run(q, nil)
-		return vm.ToValue(extractVal(res))
-	})
-
-	for _, op := range []string{"max", "count", "sum", "avg"} {
-		opName := op
-		list.Set(opName, func(call goja.FunctionCall) goja.Value {
-			key := call.Argument(0).String()
-			q := fmt.Sprintf("SELECT math::%s(%s) as val FROM %s:%s", opName, key, tableName, sessionID)
-			res, _ := run(q, nil)
-			return vm.ToValue(extractVal(res))
-		})
-	}
-
-	list.Set("defined", func(call goja.FunctionCall) goja.Value {
-		key := call.Argument(0).String()
-		q := fmt.Sprintf("SELECT %s != NONE as val FROM %s:%s", key, tableName, sessionID)
-		res, _ := run(q, nil)
-		return vm.ToValue(extractVal(res))
-	})
-
+	// Helpers for list ops
+	list.Set("defined", num.Get("defined"))
 	list.Set("define", func(call goja.FunctionCall) goja.Value {
 		key := call.Argument(0).String()
 		val := call.Argument(1).Export()
-		q := fmt.Sprintf("UPDATE %s:%s SET %s = %s ?? $val", tableName, sessionID, key, key)
-		run(q, map[string]interface{}{"val": val})
+		item, _ := getItem(key)
+		if item == nil {
+			setItem(key, val)
+		}
 		return goja.Undefined()
 	})
+	list.Set("undefine", num.Get("undefine"))
+	list.Set("undefined", num.Get("undefined"))
 
-	list.Set("undefine", func(call goja.FunctionCall) goja.Value {
-		key := call.Argument(0).String()
-		q := fmt.Sprintf("UPDATE %s:%s SET %s = NONE", tableName, sessionID, key)
-		run(q, nil)
-		return goja.Undefined()
-	})
-
-	list.Set("undefined", func(call goja.FunctionCall) goja.Value {
-		key := call.Argument(0).String()
-		q := fmt.Sprintf("SELECT %s == NONE as val FROM %s:%s", key, tableName, sessionID)
-		res, _ := run(q, nil)
-		return vm.ToValue(extractVal(res))
-	})
-
-	// STRING operations: SUB, CONCAT, SPLIT, AT, CODE_AT
-	str := vm.NewObject()
-	obj.Set("str", str)
-
-	str.Set("get", genericGet)
-
-	str.Set("concat", func(call goja.FunctionCall) goja.Value {
-		key := call.Argument(0).String()
-		val := call.Argument(1).String()
-		q := fmt.Sprintf("UPDATE %s:%s SET %s = (%s ?? '') + $val", tableName, sessionID, key, key)
-		run(q, map[string]interface{}{"val": val})
-		return goja.Undefined()
-	})
-
-	str.Set("sub", func(call goja.FunctionCall) goja.Value {
-		key := call.Argument(0).String()
-		start := call.Argument(1).ToInteger()
-		end := call.Argument(2).ToInteger()
-		q := fmt.Sprintf("SELECT string::slice(%s, $start, $end) as val FROM %s:%s", key, tableName, sessionID)
-		res, _ := run(q, map[string]interface{}{"start": start, "end": end})
-		return vm.ToValue(extractVal(res))
-	})
-
-	str.Set("split", func(call goja.FunctionCall) goja.Value {
-		key := call.Argument(0).String()
-		sep := call.Argument(1).String()
-		q := fmt.Sprintf("SELECT string::split(%s, $sep) as val FROM %s:%s", key, tableName, sessionID)
-		res, _ := run(q, map[string]interface{}{"sep": sep})
-		return vm.ToValue(extractVal(res))
-	})
-
-	str.Set("at", func(call goja.FunctionCall) goja.Value {
-		key := call.Argument(0).String()
-		pos := call.Argument(1).ToInteger()
-		q := fmt.Sprintf("SELECT string::slice(%s, $pos, $pos + 1) as val FROM %s:%s", key, tableName, sessionID)
-		res, _ := run(q, map[string]interface{}{"pos": pos})
-		return vm.ToValue(extractVal(res))
-	})
-
-	str.Set("defined", func(call goja.FunctionCall) goja.Value {
-		key := call.Argument(0).String()
-		q := fmt.Sprintf("SELECT %s != NONE as val FROM %s:%s", key, tableName, sessionID)
-		res, _ := run(q, nil)
-		return vm.ToValue(extractVal(res))
-	})
-
-	str.Set("define", func(call goja.FunctionCall) goja.Value {
-		key := call.Argument(0).String()
-		val := call.Argument(1).String()
-		q := fmt.Sprintf("UPDATE %s:%s SET %s = %s ?? $val", tableName, sessionID, key, key)
-		run(q, map[string]interface{}{"val": val})
-		return goja.Undefined()
-	})
-
-	str.Set("undefine", func(call goja.FunctionCall) goja.Value {
-		key := call.Argument(0).String()
-		q := fmt.Sprintf("UPDATE %s:%s SET %s = NONE", tableName, sessionID, key)
-		run(q, nil)
-		return goja.Undefined()
-	})
-
-	str.Set("undefined", func(call goja.FunctionCall) goja.Value {
-		key := call.Argument(0).String()
-		q := fmt.Sprintf("SELECT %s == NONE as val FROM %s:%s", key, tableName, sessionID)
-		res, _ := run(q, nil)
-		return vm.ToValue(extractVal(res))
-	})
-
-	// HASH operations: GET, SET, HAS, KEYS, VALUES, ENTRIES
+	// HASH operations
 	hash := vm.NewObject()
 	obj.Set("hash", hash)
 
 	hash.Set("set", func(call goja.FunctionCall) goja.Value {
 		key := call.Argument(0).String()
 		val := call.Argument(1).Export()
-		q := fmt.Sprintf("UPDATE %s:%s SET %s = $val", tableName, sessionID, key)
-		run(q, map[string]interface{}{"val": val})
+		setItem(key, val)
 		return goja.Undefined()
 	})
 
 	hash.Set("get", func(call goja.FunctionCall) goja.Value {
 		key := call.Argument(0).String()
-		q := fmt.Sprintf("SELECT %s as val FROM %s:%s", key, tableName, sessionID)
-		res, _ := run(q, nil)
-		return vm.ToValue(extractVal(res))
+		item, _ := getItem(key)
+		return vm.ToValue(extract(item))
 	})
 
 	hash.Set("has", func(call goja.FunctionCall) goja.Value {
 		key := call.Argument(0).String()
-		q := fmt.Sprintf("SELECT %s != NONE as val FROM %s:%s", key, tableName, sessionID)
-		res, _ := run(q, nil)
-		return vm.ToValue(extractVal(res))
+		item, _ := getItem(key)
+		return vm.ToValue(item != nil)
 	})
 
 	hash.Set("keys", func(call goja.FunctionCall) goja.Value {
 		key := call.Argument(0).String()
-		// Get the object and extract keys in Go
-		q := fmt.Sprintf("SELECT %s as val FROM %s:%s", key, tableName, sessionID)
-		res, _ := run(q, nil)
-		val := extractVal(res)
+		item, _ := getItem(key)
+		var val interface{}
+		if item != nil {
+			val = extract(item)
+		}
+
 		if m, ok := val.(map[string]interface{}); ok {
 			keys := make([]string, 0, len(m))
 			for k := range m {
@@ -723,95 +683,93 @@ func (s *Module) createStoreObject(vm *goja.Runtime, db *surrealdb.DB, tableName
 		return vm.ToValue([]string{})
 	})
 
-	hash.Set("all", func(call goja.FunctionCall) goja.Value {
-		q := fmt.Sprintf("SELECT * FROM %s:%s", tableName, sessionID)
-		res, _ := run(q, nil)
-		if m, ok := res.(map[string]interface{}); ok {
-			if items, ok := m["result"].([]interface{}); ok && len(items) > 0 {
-				return vm.ToValue(items[0])
-			}
-			return vm.ToValue(res)
-		}
-		return goja.Undefined()
-	})
-
-	hash.Set("defined", func(call goja.FunctionCall) goja.Value {
-		key := call.Argument(0).String()
-		q := fmt.Sprintf("SELECT %s != NONE as val FROM %s:%s", key, tableName, sessionID)
-		res, _ := run(q, nil)
-		return vm.ToValue(extractVal(res))
-	})
-
+	hash.Set("defined", num.Get("defined"))
 	hash.Set("define", func(call goja.FunctionCall) goja.Value {
 		key := call.Argument(0).String()
 		val := call.Argument(1).Export()
-		q := fmt.Sprintf("UPDATE %s:%s SET %s = %s ?? $val", tableName, sessionID, key, key)
-		run(q, map[string]interface{}{"val": val})
+		item, _ := getItem(key)
+		if item == nil {
+			setItem(key, val)
+		}
+		return goja.Undefined()
+	})
+	hash.Set("undefine", num.Get("undefine"))
+	hash.Set("undefined", num.Get("undefined"))
+
+	str := vm.NewObject()
+	obj.Set("str", str)
+	str.Set("get", hash.Get("get"))
+	str.Set("concat", func(call goja.FunctionCall) goja.Value {
+		key := call.Argument(0).String()
+		val := call.Argument(1).String()
+		item, _ := getItem(key)
+		current := ""
+		if item != nil {
+			if s, ok := extract(item).(string); ok {
+				current = s
+			}
+		}
+		setItem(key, current+val)
 		return goja.Undefined()
 	})
 
-	hash.Set("undefine", func(call goja.FunctionCall) goja.Value {
+	str.Set("defined", num.Get("defined"))
+	str.Set("define", func(call goja.FunctionCall) goja.Value {
 		key := call.Argument(0).String()
-		q := fmt.Sprintf("UPDATE %s:%s SET %s = NONE", tableName, sessionID, key)
-		run(q, nil)
+		val := call.Argument(1).String()
+		item, _ := getItem(key)
+		if item == nil {
+			setItem(key, val)
+		}
 		return goja.Undefined()
 	})
-
-	hash.Set("undefined", func(call goja.FunctionCall) goja.Value {
-		key := call.Argument(0).String()
-		q := fmt.Sprintf("SELECT %s == NONE as val FROM %s:%s", key, tableName, sessionID)
-		res, _ := run(q, nil)
-		return vm.ToValue(extractVal(res))
-	})
-	run(fmt.Sprintf("CREATE %s:%s SET create_at = time::now()", tableName, sessionID), nil)
+	str.Set("undefine", num.Get("undefine"))
+	str.Set("undefined", num.Get("undefined"))
 
 	return obj
 }
 
 func extractVal(res interface{}) interface{} {
-	if m, ok := res.(map[string]interface{}); ok {
-		if val, ok := m["val"]; ok {
-			return val
-		}
-		if result, ok := m["result"]; ok {
-			if arr, ok := result.([]interface{}); ok && len(arr) > 0 {
-				if first, ok := arr[0].(map[string]interface{}); ok {
-					return first["val"]
-				}
-			}
-		}
-	}
-	return nil
+	return res
 }
 
-func (s *Module) cleanupLoop(db *surrealdb.DB, tableName string) {
-	ticker := time.NewTicker(5 * time.Minute)
+func (s *Module) cleanupLoop(db *gorm.DB, tableName string) {
+	if db == nil {
+		return
+	}
+	ticker := time.NewTicker(1 * time.Minute)
 	for range ticker.C {
-		q := fmt.Sprintf("DELETE %s WHERE expires_at < time::now()", tableName)
-		db.Query(q, nil)
+		db.Where("ttl < ?", time.Now()).Delete(&StorageItem{})
 	}
 }
 
 func init() {
-	// Initialize SurrealDB
+	// Initialize GORM / SQLite
 	var err error
-	dataDir := "./data"
+	dataDir := ".data"
 	os.MkdirAll(dataDir, 0755)
 
 	persistentPath := filepath.Join(dataDir, "sessions.db")
-	persistentDB, err = surrealdb.NewSurrealKV(persistentPath)
+	persistentDB, err = gorm.Open(sqlite.New(sqlite.Config{DriverName: "sqlite", DSN: persistentPath}), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Warn),
+	})
 	if err != nil {
 		log.Printf("Failed to init persistent session DB: %v", err)
 	} else {
-		persistentDB.Use("http-server", "persistent")
+		// WAL mode for concurrency
+		persistentDB.Exec("PRAGMA journal_mode = WAL")
+		persistentDB.AutoMigrate(&StorageItem{})
 		go (&Module{}).cleanupLoop(persistentDB, "session")
 	}
 
-	volatileDB, err = surrealdb.NewMemory()
+	volatileDB, err = gorm.Open(sqlite.New(sqlite.Config{DriverName: "sqlite", DSN: ":memory:"}), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Warn),
+	})
 	if err != nil {
 		log.Printf("Failed to init volatile session DB: %v", err)
 	} else {
-		volatileDB.Use("http-server", "volatile")
+		// WAL mode even for memory? memory default is fine.
+		volatileDB.AutoMigrate(&StorageItem{})
 		go (&Module{}).cleanupLoop(volatileDB, "volatile")
 	}
 

@@ -1,0 +1,40 @@
+# Test: SSL avec certificat manuel
+# Serveur HTTPS avec un certificat auto-signé local (cert.pem / key.pem).
+# Générer avec: openssl req -x509 -newkey rsa:4096 -keyout examples/key.pem -out examples/cert.pem -days 365 -nodes -subj "/CN=localhost"
+# Tester avec: curl -k https://127.0.0.1:8787/
+
+HTTPS 127.0.0.1:8787
+    SSL examples/key.pem examples/cert.pem
+
+    SET SERVER_NAME "SSL-Cert-Test"
+
+    GET "/" BEGIN
+        context.JSON({
+            ok: true,
+            server: settings.SERVER_NAME,
+            tls: "manual-cert"
+        });
+    END GET
+
+    GET "/hello" BEGIN
+        context.SendString("Hello over HTTPS with manual cert!");
+    END GET
+
+    GET "/template" TEMPLATE text/html BEGIN
+        <?js
+          const mode = "SSL";
+          const host = context.Hostname();
+        ?>
+        <html>
+        <body>
+            <h1>{{server}} – {{mode}}</h1>
+            <p>Host: {{host}}</p>
+        </body>
+        </html>
+    END GET
+
+    ERROR 404 TEMPLATE text/html BEGIN
+        <h1>404 – Not Found (SSL)</h1><p>Path not found: {{path}}</p>
+    END ERROR
+
+END HTTPS

@@ -1,0 +1,11 @@
+# Common Application Settings
+# This file is included in the main binder configuration
+
+SET APP_NAME "Modular Server"
+SET API_VERSION "1.1"
+
+ENV PREFIX APP_
+ENV SET MODE "development"
+ENV DEFAULT LOG_LEVEL "debug"
+
+SSL AUTO dev.example.com admin@example.com

@@ -1,0 +1,71 @@
+<div class="d-flex align-items-center justify-content-between mb-4">
+  <div class="d-flex align-items-center gap-3">
+    <a href="{{adminPrefix}}" class="btn btn-light rounded-circle d-flex align-items-center justify-content-center" style="width: 40px; height: 40px;">
+      <i class="bi bi-arrow-left"></i>
+    </a>
+    <h2 class="h4 mb-0 fw-bold">{{schemaName}}</h2>
+  </div>
+  <button class="btn btn-primary shadow-sm" data-bs-toggle="modal" data-bs-target="#createDocumentModal">
+    <i class="bi bi-plus-lg me-2"></i> New Document
+  </button>
+</div>
+
+<div class="card border-0 shadow-sm mb-4">
+  <div class="card-body border-bottom bg-light-subtle py-3">
+    <div class="row g-3 align-items-center">
+      <div class="col-12 col-md-auto">
+        <div class="input-group">
+          <span class="input-group-text bg-white border-end-0 text-muted"><i class="bi bi-search"></i></span>
+          <input type="search" class="form-control border-start-0 ps-0" placeholder="Search documents..." id="search-input"
+            hx-get="{{adminPrefix}}/collections/{{schemaSlug}}/table"
+            hx-trigger="input changed delay:300ms text-indent:0" hx-target="#doc-table"
+            name="q" style="min-width: 250px;">
+        </div>
+      </div>
+      <div class="col-12 col-md-auto">
+        <select class="form-select" name="sort"
+          hx-get="{{adminPrefix}}/collections/{{schemaSlug}}/table"
+          hx-trigger="change" hx-target="#doc-table" hx-include="#search-input">
+          <option value="-created_at">Newest First</option>
+          <option value="created_at">Oldest First</option>
+          <option value="-updated_at">Recently Updated</option>
+          <option value="updated_at">Least Recently Updated</option>
+        </select>
+      </div>
+    </div>
+  </div>
+  <div id="doc-table">
+    {{{tableContent}}}
+  </div>
+</div>
+
+<!-- Create Document Modal -->
+<div class="modal fade" id="createDocumentModal" tabindex="-1" aria-labelledby="createDocumentModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content border-0 shadow-lg">
+      <div class="modal-header border-0">
+        <h5 class="modal-title fw-bold" id="createDocumentModalLabel">Add New Document</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <form hx-post="{{apiPrefix}}/{{schemaSlug}}" hx-target="#doc-table" hx-swap="innerHTML"
+        hx-on::after-request="if(event.detail.successful){ bootstrap.Modal.getInstance(document.getElementById('createDocumentModal')).hide(); this.reset(); htmx.ajax('GET','{{adminPrefix}}/collections/{{schemaSlug}}/table',{target:'#doc-table'})}">
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label small fw-bold text-muted">Document Data (JSON)</label>
+            <textarea name="data" class="form-control font-monospace" rows="12" placeholder='{
+  "field": "value",
+  "nested": {
+    "key": 123
+  }
+}' required></textarea>
+            <div class="form-text tiny">Valid JSON object representing the document content.</div>
+          </div>
+        </div>
+        <div class="modal-footer border-0">
+          <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary px-4 fw-bold">Create Document</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>

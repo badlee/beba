@@ -1,0 +1,30 @@
+# Example: Overriding global default security
+# By default, the server applies a policy of 100r/s (burst 10).
+# To change this for ALL protocols across the entire server,
+# use the [default] argument in a SECURITY block.
+
+SECURITY server_wide_protection [default]
+    # Redefine the global baseline: 500 requests per second, burst 50.
+    # This will apply to any HTTP, TCP, DTP or UDP server defined in this file (or included files)
+    # that does NOT specify its own local security policy.
+    CONNECTION RATE 500r/s 1s burst=50 mode=ip
+    
+    # Globally allow your management office IP
+    CONNECTION ALLOW 192.168.1.100
+END SECURITY
+
+# This HTTP server will automatically use 'server_wide_protection'
+HTTP 0.0.0.0:8080
+    GET "/" BEGIN
+        context.SendString("Hello, you are protected by the new global default.");
+    END GET
+END HTTP
+
+# This TCP multiplexer will ALSO use 'server_wide_protection'
+TCP 0.0.0.0:9000
+    HTTP
+        GET "/internal" BEGIN
+            context.SendString("Internal HTTP via TCP mux also protected.");
+        END GET
+    END HTTP
+END TCP

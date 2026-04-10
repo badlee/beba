@@ -1,0 +1,14 @@
+# examples/layouts_demo.bind
+# Run with: ./http-server --bind-file examples/layouts_demo.bind
+
+HTTP 0.0.0.0:8080
+    SET APP_NAME "Layout Demo"
+    
+    # Use FsRouter on /
+    ROUTER / "./layouts_pages" [indexName="index.html"]
+    
+    ERROR 404 TEMPLATE text/html BEGIN
+        <h1>Custom 404 from Binder</h1>
+        <p>This is only shown if not handled by FsRouter's 404.html</p>
+    END ERROR
+END HTTP

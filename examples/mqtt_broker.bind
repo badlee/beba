@@ -1,0 +1,62 @@
+// ============================================
+// Exemple de configuration MQTT Proxy & Broker
+// ============================================
+SECURITY allowed
+    # The file path to the comprehensive GeoJSON data
+    GEOJSON zones_of_interest "complex_zone.geojson"
+    
+    # Deny connections from any shape within this complex file
+    CONNECTION DENY zones_of_interest
+END SECURITY
+MQTT ":1883"
+    // Optionnel: Déclarer SSL pour avoir du MQTTS (MQTT over TLS)
+    // SSL "./cert.pem" "./key.pem"
+
+    // Configuration fine des capacités du broker selon la spec MQTT v5
+    OPTIONS DEFINE
+        MAX_CLIENTS 10000
+        MAX_PACKET_SIZE 1048576       // 1MB
+        MESSAGE_EXPIRY 72h            // Garder les messages 3 jours
+        SESSION_EXPIRY 48h            // Garder les sessions mortes 2 jours
+        AVAILABLE_SHARED_SUB ON       // Support des abonnements partagés ($share/GROUP/topic)
+        RETAIN ON
+        HAS_WILDCARD_SUB ON
+    END OPTIONS
+
+    // Activation de la persistance SQLite/Postgres native GORM 
+    // pour garantir QoS 1 et QoS 2 sans perte de message en cas de redémarrage.
+    STORAGE "./data.db" [engine=sqlite]
+
+    // WAF appliqué à la socket avant même le handshale MQTT (Bot Protection)
+    SECURITY allowed
+
+    // Authentification via JavaScript Engine natif
+    AUTH BEGIN
+        // `user`, `pwd` et `clientId` sont exposés automatiquement.
+        if (user === "admin" && pwd === "super_secret") {
+            allow();
+        } else {
+            reject("Invalid credentials");
+        }
+    END AUTH
+
+    // Contrôle d'accès fin sur les Actions via Script JS
+    ACL BEGIN
+        // `mode` = "READ" | "WRITE"
+        // `topic` = topic demandé
+        if (mode === "WRITE" && topic.startsWith("admin/")) {
+            if (user !== "admin") {
+                reject("Only admin can write to admin/# topics");
+                return;
+            }
+        }
+        allow();
+    END ACL
+
+    // Hook dynamique asynchrone lors de la réception d'un packet
+    ON ON_PUBLISH BEGIN
+        // console.log() ou print() interceptés par le serveur Fiber
+        print(`MQTT Publish reçu par ${clientId} sur ${eventData.topic}`);
+    END ON
+
+END MQTT

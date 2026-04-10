@@ -1,0 +1,10 @@
+HTTP 127.0.0.1:8182
+    GET "/text" TEXT "Hello World"
+    GET "/json" JSON {"status": "ok", "message": "hello"}
+    // Base64 for "Hello Bytes"
+    GET "/bytes" BYTES SGVsbG8gQnl0ZXM=
+    // Smart Handler: Template
+    GET "/tpl" HANDLER "examples/types.html"
+    // Smart Handler: Static
+    GET "/static" HANDLER "main.go"
+END HTTP

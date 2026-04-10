@@ -9,9 +9,28 @@ import (
 
 type Module struct{}
 
+type FiberCookiesCtx interface {
+	Cookies(key string, defaultValue ...string) string
+	Cookie(cookie *fiber.Cookie) *fiber.Cookie
+	ClearCookie(key string, path ...string)
+}
+
+type FakeCookiesCtx struct {
+}
+
+func (f *FakeCookiesCtx) Cookies(key string, defaultValue ...string) string {
+	return ""
+}
+
+func (f *FakeCookiesCtx) Cookie(cookie *fiber.Cookie) *fiber.Cookie {
+	return cookie
+}
+
+func (f *FakeCookiesCtx) ClearCookie(key string, path ...string) {
+}
+
 func init() {
 	modules.RegisterModule(&Module{})
-
 }
 
 func (s *Module) Name() string {
@@ -22,9 +41,19 @@ func (s *Module) Doc() string {
 	return "Cookies module"
 }
 
-func (s *Module) Loader(ctx fiber.Ctx, vm *goja.Runtime, module *goja.Object) {
+func (s *Module) Loader(c any, vm *goja.Runtime, moduleObject *goja.Object) {
+	// CommonJS support: if exports exists, use it as the target
+	module := moduleObject
+	if exp := moduleObject.Get("exports"); exp != nil && !goja.IsUndefined(exp) {
+		module = exp.ToObject(vm)
+	}
+
 	// Expose cookies
-	cookies := vm.NewObject()
+	cookies := module
+	ctx, ok := c.(FiberCookiesCtx)
+	if !ok {
+		ctx = &FakeCookiesCtx{}
+	}
 	cookies.Set("get", func(call goja.FunctionCall) goja.Value {
 		key := call.Argument(0).String()
 		return vm.ToValue(ctx.Cookies(key))
@@ -48,5 +77,4 @@ func (s *Module) Loader(ctx fiber.Ctx, vm *goja.Runtime, module *goja.Object) {
 		key := call.Argument(0).String()
 		return vm.ToValue(ctx.Cookies(key) != "")
 	})
-	module.Set("exports", cookies)
 }

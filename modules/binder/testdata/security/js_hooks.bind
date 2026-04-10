@@ -1,0 +1,19 @@
+SECURITY js_hooks
+    # Programmatic IP hook with arguments
+    CONNECTION IP BEGIN [threshold=100]
+        if (CONN.current_rate > args.threshold) reject("rate exceeded");
+    END CONNECTION
+    
+    # Programmatic GEO hook
+    CONNECTION GEO BEGIN
+        if (GEO.country === "FR" && GEO.city === "Paris") allow();
+        else if (GEO.country === "DE") reject("forbidden from Germany");
+    END CONNECTION
+END SECURITY
+
+HTTP 127.0.0.1:0
+    SECURITY js_hooks
+    GET "/" BEGIN
+        context.SendString("js_hooks_ok");
+    END GET
+END HTTP

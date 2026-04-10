@@ -1,11 +1,15 @@
 package storage
 
 import (
-	"http-server/plugins/surrealdb-embedded"
 	"strings"
 	"testing"
 
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+
 	"github.com/dop251/goja"
+
+	_ "modernc.org/sqlite"
 )
 
 func TestJWTSession(t *testing.T) {
@@ -132,8 +136,11 @@ func TestJWTSession(t *testing.T) {
 
 func TestStorageUnset(t *testing.T) {
 	// Initialize memory DB for test
-	db, _ := surrealdb.NewMemory()
-	db.Use("test", "test")
+	db, err := gorm.Open(sqlite.New(sqlite.Config{DriverName: "sqlite", DSN: ":memory:"}), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("Failed to init DB: %v", err)
+	}
+	db.AutoMigrate(&StorageItem{})
 
 	vm := goja.New()
 	mod := &Module{}
@@ -163,7 +170,7 @@ func TestStorageUnset(t *testing.T) {
 		s.hash.undefine("obj");
 		if (!s.hash.undefined("obj")) throw new Error("Hash undefine failed");
 	`
-	_, err := vm.RunString(script)
+	_, err = vm.RunString(script)
 	if err != nil {
 		t.Fatalf("Storage test failed: %v", err)
 	}

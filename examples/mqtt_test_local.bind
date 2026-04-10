@@ -1,0 +1,35 @@
+// Minimal broker for local mosquitto testing — no DB, open auth for quick tests.
+MQTT ":1883"
+
+    OPTIONS DEFINE
+        MAX_CLIENTS 100
+        RETAIN ON
+        HAS_WILDCARD_SUB ON
+    END OPTIONS
+
+    // Auth: accept admin/test and any client with user "guest"
+    AUTH BEGIN
+        if (user === "admin" && pwd === "test") {
+            allow();
+        } else if (user === "guest") {
+            allow();
+        } else {
+            reject("unauthorized: " + user);
+        }
+    END AUTH
+
+    // ACL: guests can only read
+    ACL BEGIN
+        if (user === "guest" && mode === "WRITE") {
+            reject("guests are read-only");
+        } else {
+            allow();
+        }
+    END ACL
+
+    // Log every publish
+    ON ON_PUBLISH BEGIN
+        print("[MQTT] " + clientId + " → " + eventData.topic + ": " + eventData.payload);
+    END ON
+
+END MQTT

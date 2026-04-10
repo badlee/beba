@@ -33,7 +33,7 @@ func TestRequireNativeModule(t *testing.T) {
 
 	vm := js.New()
 
-	registry := new(Registry[any])
+	registry := new(Registry)
 	registry.instance = 12
 	registry.Enable(vm)
 
@@ -57,7 +57,7 @@ func TestRequireNativeModule(t *testing.T) {
 func TestRegisterCoreModule(t *testing.T) {
 	vm := js.New()
 
-	registry := new(Registry[any])
+	registry := new(Registry)
 	registry.instance = 12
 	registry.Enable(vm)
 
@@ -139,7 +139,7 @@ func TestRequireRegistryNativeModule(t *testing.T) {
 	log.print('passed');
 	`
 
-	logWithOutput := func(w io.Writer, prefix string) ModuleLoader[any] {
+	logWithOutput := func(w io.Writer, prefix string) ModuleLoader {
 		return func(instance any, vm *js.Runtime, module *js.Object) {
 			o := module.Get("exports").(*js.Object)
 			o.Set("print", func(call js.FunctionCall) js.Value {
@@ -152,7 +152,7 @@ func TestRequireRegistryNativeModule(t *testing.T) {
 	vm1 := js.New()
 	buf1 := &bytes.Buffer{}
 
-	registry1 := new(Registry[any])
+	registry1 := new(Registry)
 	registry1.Enable(vm1)
 
 	registry1.RegisterNativeModule("test/log", logWithOutput(buf1, "vm1 "))
@@ -160,7 +160,7 @@ func TestRequireRegistryNativeModule(t *testing.T) {
 	vm2 := js.New()
 	buf2 := &bytes.Buffer{}
 
-	registry2 := new(Registry[any])
+	registry2 := new(Registry)
 	registry2.Enable(vm2)
 
 	registry2.RegisterNativeModule("test/log", logWithOutput(buf2, "vm2 "))
@@ -230,7 +230,7 @@ func TestRequire(t *testing.T) {
 			vm := js.New()
 			vm.Set("testPath", test.path)
 
-			registry := new(Registry[any])
+			registry := new(Registry)
 			registry.instance = 12
 			registry.Enable(vm)
 
@@ -269,7 +269,7 @@ func TestSourceLoader(t *testing.T) {
 
 	vm := js.New()
 
-	registry := NewRegistry(WithGlobalFolders[any]("."), WithLoader[any](func(name string) ([]byte, error) {
+	registry := NewRegistry(WithGlobalFolders("."), WithLoader(func(name string) ([]byte, error) {
 		if name == "m.js" {
 			return []byte(MODULE), nil
 		}
@@ -308,7 +308,7 @@ func TestStrictModule(t *testing.T) {
 
 	vm := js.New()
 
-	registry := NewRegistry(WithGlobalFolders[any]("."), WithLoader[any](func(name string) ([]byte, error) {
+	registry := NewRegistry(WithGlobalFolders("."), WithLoader(func(name string) ([]byte, error) {
 		if name == "m.js" {
 			return []byte(MODULE), nil
 		}
@@ -329,7 +329,7 @@ func TestStrictModule(t *testing.T) {
 func TestResolve(t *testing.T) {
 	testRequire := func(src, fpath string, globalFolders []string, fs map[string]string) (*js.Runtime, js.Value, error) {
 		vm := js.New()
-		r := NewRegistry(WithGlobalFolders[any](globalFolders...), WithLoader[any](mapFileSystemSourceLoader(fs)))
+		r := NewRegistry(WithGlobalFolders(globalFolders...), WithLoader(mapFileSystemSourceLoader(fs)))
 		r.instance = 12
 		r.Enable(vm)
 		t.Logf("Require(%s)", fpath)
@@ -429,7 +429,7 @@ func TestResolve(t *testing.T) {
 
 func TestRequireCycle(t *testing.T) {
 	vm := js.New()
-	r := NewRegistry(WithLoader[any](mapFileSystemSourceLoader(map[string]string{
+	r := NewRegistry(WithLoader(mapFileSystemSourceLoader(map[string]string{
 		"a.js": `var b = require('./b.js'); exports.done = true;`,
 		"b.js": `var a = require('./a.js'); exports.done = true;`,
 	})))
@@ -450,7 +450,7 @@ func TestRequireCycle(t *testing.T) {
 
 func TestErrorPropagation(t *testing.T) {
 	vm := js.New()
-	r := NewRegistry(WithLoader[any](mapFileSystemSourceLoader(map[string]string{
+	r := NewRegistry(WithLoader(mapFileSystemSourceLoader(map[string]string{
 		"m.js": `throw 'test passed';`,
 	})))
 	r.instance = 12
@@ -470,7 +470,7 @@ func TestErrorPropagation(t *testing.T) {
 
 func TestSourceMapLoader(t *testing.T) {
 	vm := js.New()
-	r := NewRegistry(WithLoader[any](func(p string) ([]byte, error) {
+	r := NewRegistry(WithLoader(func(p string) ([]byte, error) {
 		switch filepath.ToSlash(p) {
 		case "dir/m.js":
 			return []byte(`throw 'test passed';
@@ -526,7 +526,7 @@ func TestDefaultModuleLoader(t *testing.T) {
 		t.Fatal(err)
 	}
 	vm := js.New()
-	r := NewRegistry[any]()
+	r := NewRegistry()
 	rr := r.Enable(vm)
 	_, err = rr.Require("./module")
 	if err == nil {
@@ -585,7 +585,7 @@ func TestDefaultPathResolver(t *testing.T) {
 		t.Fatal(err)
 	}
 	vm := js.New()
-	r := NewRegistry[any]()
+	r := NewRegistry()
 	rr := r.Enable(vm)
 	_, err = rr.Require("a")
 	if err != nil {

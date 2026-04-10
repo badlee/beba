@@ -1,0 +1,23 @@
+DATABASE "sqlite://mqtt_full_test.db"
+    NAME "mqtt_db"
+END DATABASE
+
+SECURITY "mqtt_security"
+    CONNECTION DENY "1.2.3.4"
+    CONNECTION ALLOW "127.0.0.1"
+END SECURITY
+
+TCP "127.0.0.1:0"
+    MQTT ":0"
+        STORAGE "mqtt_db"
+        SECURITY "mqtt_security"
+        
+        OPTIONS DEFINE
+            RETAIN ON
+        END OPTIONS
+        
+        AUTH BEGIN
+            allow();
+        END AUTH
+    END MQTT
+END TCP

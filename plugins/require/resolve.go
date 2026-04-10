@@ -12,7 +12,7 @@ import (
 
 const NodePrefix = "node:"
 
-func (r *RequireModule[T]) resolvePath(base, name string) string {
+func (r *RequireModule) resolvePath(base, name string) string {
 	if r.r.pathResolver != nil {
 		return r.r.pathResolver(base, name)
 	}
@@ -21,7 +21,7 @@ func (r *RequireModule[T]) resolvePath(base, name string) string {
 
 // NodeJS module search algorithm described by
 // https://nodejs.org/api/modules.html#modules_all_together
-func (r *RequireModule[T]) resolve(modpath string) (module *js.Object, err error) {
+func (r *RequireModule) resolve(modpath string) (module *js.Object, err error) {
 	var start string
 	err = nil
 	if !filepath.IsAbs(modpath) {
@@ -63,35 +63,54 @@ func (r *RequireModule[T]) resolve(modpath string) (module *js.Object, err error
 	return
 }
 
-func (r *RequireModule[T]) loadNative(path string) (*js.Object, error) {
+func (r *RequireModule) loadNative(path string) (*js.Object, error) {
 	module := r.modules[path]
 	if module != nil {
 		return module, nil
 	}
 
-	var ldr ModuleLoader[T]
+	var ldr ModuleLoader
 	if ld, ok := r.r.native[path]; ok && ld != nil {
 		var lds any = ld
-		if l := lds.(ModuleLoader[T]); l != nil {
+		if l := lds.(ModuleLoader); l != nil {
 			ldr = l
 		}
 	}
 
 	var isBuiltIn, withPrefix bool
-	if ldr == nil && builtin[path] != nil {
-		if l := builtin[path].(ModuleLoader[T]); l != nil {
-			ldr = l
-		}
-		if ldr == nil && strings.HasPrefix(path, NodePrefix) {
-			if l := builtin[path[len(NodePrefix):]].(ModuleLoader[T]); l != nil {
+	if ldr == nil {
+		if ld, ok := native[path]; ok && ld != nil {
+			if l, ok := ld.(ModuleLoader); ok {
 				ldr = l
 			}
-			if ldr == nil {
-				return nil, NoSuchBuiltInModuleError
+		}
+	}
+
+	if ldr == nil {
+		if lds, ok := builtin[path]; ok && lds != nil {
+			if llds, ok := lds.(ModuleLoader); ok {
+				ldr = llds
 			}
+		}
+	}
+
+	if ldr != nil {
+		if strings.HasPrefix(path, NodePrefix) {
 			withPrefix = true
 		}
 		isBuiltIn = true
+	} else if strings.HasPrefix(path, NodePrefix) {
+		pathWithoutPrefix := path[len(NodePrefix):]
+		if lds, ok := builtin[pathWithoutPrefix]; ok && lds != nil {
+			if l, ok := lds.(ModuleLoader); ok {
+				ldr = l
+				isBuiltIn = true
+				withPrefix = true
+			}
+		}
+		if ldr == nil {
+			return nil, NoSuchBuiltInModuleError
+		}
 	}
 
 	if ldr != nil {
@@ -113,7 +132,7 @@ func (r *RequireModule[T]) loadNative(path string) (*js.Object, error) {
 	return nil, InvalidModuleError
 }
 
-func (r *RequireModule[T]) loadAsFileOrDirectory(path string) (module *js.Object, err error) {
+func (r *RequireModule) loadAsFileOrDirectory(path string) (module *js.Object, err error) {
 	if module, err = r.loadAsFile(path); module != nil || err != nil {
 		return
 	}
@@ -121,7 +140,7 @@ func (r *RequireModule[T]) loadAsFileOrDirectory(path string) (module *js.Object
 	return r.loadAsDirectory(path)
 }
 
-func (r *RequireModule[T]) loadAsFile(path string) (module *js.Object, err error) {
+func (r *RequireModule) loadAsFile(path string) (module *js.Object, err error) {
 	if module, err = r.loadModule(path); module != nil || err != nil {
 		return
 	}
@@ -135,7 +154,7 @@ func (r *RequireModule[T]) loadAsFile(path string) (module *js.Object, err error
 	return r.loadModule(p)
 }
 
-func (r *RequireModule[T]) loadIndex(modpath string) (module *js.Object, err error) {
+func (r *RequireModule) loadIndex(modpath string) (module *js.Object, err error) {
 	p := r.resolvePath(modpath, "index.js")
 	if module, err = r.loadModule(p); module != nil || err != nil {
 		return
@@ -145,7 +164,7 @@ func (r *RequireModule[T]) loadIndex(modpath string) (module *js.Object, err err
 	return r.loadModule(p)
 }
 
-func (r *RequireModule[T]) loadAsDirectory(modpath string) (module *js.Object, err error) {
+func (r *RequireModule) loadAsDirectory(modpath string) (module *js.Object, err error) {
 	p := r.resolvePath(modpath, "package.json")
 	buf, err := r.r.getSource(p)
 	if err != nil {
@@ -167,11 +186,11 @@ func (r *RequireModule[T]) loadAsDirectory(modpath string) (module *js.Object, e
 	return r.loadIndex(m)
 }
 
-func (r *RequireModule[T]) loadNodeModule(modpath, start string) (*js.Object, error) {
+func (r *RequireModule) loadNodeModule(modpath, start string) (*js.Object, error) {
 	return r.loadAsFileOrDirectory(r.resolvePath(start, modpath))
 }
 
-func (r *RequireModule[T]) loadNodeModules(modpath, start string) (module *js.Object, err error) {
+func (r *RequireModule) loadNodeModules(modpath, start string) (module *js.Object, err error) {
 	for _, dir := range r.r.globalFolders {
 		if module, err = r.loadNodeModule(modpath, dir); module != nil || err != nil {
 			return
@@ -200,7 +219,7 @@ func (r *RequireModule[T]) loadNodeModules(modpath, start string) (module *js.Ob
 	return
 }
 
-func (r *RequireModule[T]) getCurrentModulePath() string {
+func (r *RequireModule) getCurrentModulePath() string {
 	var buf [2]js.StackFrame
 	frames := r.runtime.CaptureCallStack(2, buf[:0])
 	if len(frames) < 2 {
@@ -209,13 +228,13 @@ func (r *RequireModule[T]) getCurrentModulePath() string {
 	return filepath.Dir(frames[1].SrcName())
 }
 
-func (r *RequireModule[T]) createModuleObject() *js.Object {
+func (r *RequireModule) createModuleObject() *js.Object {
 	module := r.runtime.NewObject()
 	module.Set("exports", r.runtime.NewObject())
 	return module
 }
 
-func (r *RequireModule[T]) loadModule(path string) (*js.Object, error) {
+func (r *RequireModule) loadModule(path string) (*js.Object, error) {
 	module := r.modules[path]
 	if module == nil {
 		module = r.createModuleObject()
@@ -233,7 +252,7 @@ func (r *RequireModule[T]) loadModule(path string) (*js.Object, error) {
 	return module, nil
 }
 
-func (r *RequireModule[T]) loadModuleFile(path string, jsModule *js.Object) error {
+func (r *RequireModule) loadModuleFile(path string, jsModule *js.Object) error {
 
 	prg, err := r.r.getCompiledSource(path)
 

@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>{{settings.siteName}} - {{APP_NAME}}</title>
+    <style>
+        body { font-family: sans-serif; margin: 2em; line-height: 1.6; }
+        header { border-bottom: 2px solid #333; margin-bottom: 1em; }
+        footer { margin-top: 2em; color: #666; font-size: 0.8em; }
+        .wrapper { max-width: 800px; margin: auto; }
+    </style>
+</head>
+<body>
+    <div class="wrapper">
+        <header>
+            <h1>My Cool App</h1>
+            <nav><a href="/">Home</a> | <a href="/about">About</a> | <a href="/admin/users">Admin</a> | <a href="/widget">Partial Widget</a></nav>
+        </header>
+        
+        <main>
+            {{content}}
+        </main>
+
+        <footer>
+            &copy; 2026 Layout Demo. Powered by http-server.
+        </footer>
+    </div>
+</body>
+</html>

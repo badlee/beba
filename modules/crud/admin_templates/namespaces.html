@@ -1,0 +1,89 @@
+<div class="d-flex align-items-center justify-content-between mb-4">
+  <h2 class="h4 mb-0 fw-bold">Namespaces</h2>
+  <button class="btn btn-primary shadow-sm" data-bs-toggle="modal" data-bs-target="#newNamespaceModal">
+    <i class="bi bi-plus-lg me-2"></i> New Namespace
+  </button>
+</div>
+
+<div class="card border-0 shadow-sm overflow-hidden">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead class="bg-light-subtle">
+        <tr>
+          <th class="ps-4">Name</th>
+          <th>Slug</th>
+          <th>Auth Providers</th>
+          <th class="text-center">Status</th>
+          <th class="text-end pe-4" style="width: 100px;">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        <?js var parsedNamespaces = JSON.parse(settings.namespaces || '[]') || []; ?>
+        {{#parsedNamespaces}}
+        <tr>
+          <td class="ps-4 fw-medium text-main">{{name}}</td>
+          <td><span class="badge bg-light text-dark border font-monospace">{{slug}}</span></td>
+          <td>
+            <div class="small text-muted">{{auth_providers}}</div>
+          </td>
+          <td class="text-center">
+            {{#is_default}}<span class="badge rounded-pill bg-success-subtle text-success border border-success-subtle px-3 py-2">Default</span>{{/is_default}}
+            {{^is_default}}<span class="text-muted opacity-50 small">—</span>{{/is_default}}
+          </td>
+          <td class="text-end pe-4">
+            <button class="btn btn-sm btn-outline-danger border-0"
+              hx-delete="{{apiPrefix}}/namespaces/{{id}}"
+              hx-target="closest tr" hx-swap="outerHTML"
+              hx-confirm="Are you sure you want to delete this namespace? This action cannot be undone."
+              title="Delete Namespace">
+              <i class="bi bi-trash"></i>
+            </button>
+          </td>
+        </tr>
+        {{/parsedNamespaces}}
+        {{^parsedNamespaces}}
+        <tr>
+          <td colspan="5" class="text-center py-5 text-muted">
+            <i class="bi bi-diagram-3 fs-1 opacity-25"></i>
+            <p class="mt-2">No namespaces found.</p>
+          </td>
+        </tr>
+        {{/parsedNamespaces}}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Modal -->
+<div class="modal fade" id="newNamespaceModal" tabindex="-1" aria-labelledby="newNamespaceModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content border-0 shadow-lg">
+      <div class="modal-header border-0">
+        <h5 class="modal-title fw-bold" id="newNamespaceModalLabel">New Namespace</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <form hx-post="{{apiPrefix}}/namespaces" hx-on::after-request="if(event.detail.successful){htmx.ajax('GET', '{{adminPrefix}}/namespaces', {target:'#main-content', pushUrl:false})}">
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label small fw-bold text-muted">Namespace Name</label>
+            <input name="name" class="form-control" placeholder="e.g. Production" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label small fw-bold text-muted">Slug</label>
+            <input name="slug" class="form-control font-monospace" placeholder="e.g. prod" required>
+            <div class="form-text tiny">Lowercase letters, numbers, and dashes only.</div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label small fw-bold text-muted">Auth Providers</label>
+            <input name="auth_providers" class="form-control" placeholder="e.g. password, google">
+            <div class="form-text tiny">Comma-separated list of active auth strategies.</div>
+          </div>
+        </div>
+        <div class="modal-footer border-0">
+          <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary px-4 fw-bold">Create Namespace</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>

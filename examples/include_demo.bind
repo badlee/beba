@@ -1,0 +1,18 @@
+# Main Binder Configuration
+# Demonstrates the INCLUDE directive for modularity
+
+HTTP 0.0.0.0:8080
+    # Include common environmental and application settings
+    INCLUDE "includes/common_settings.bind"
+
+    # Define a simple home route
+    GET "/" BEGIN
+        context.SendString("Welcome to the Modular Binder Server!");
+    END GET
+
+    # Include API routes from another file
+    INCLUDE "includes/api_routes.bind"
+
+    # Static files
+    STATIC /public "./public"
+END HTTP

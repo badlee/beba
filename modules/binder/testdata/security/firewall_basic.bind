@@ -1,0 +1,17 @@
+SECURITY firewall_basic
+    # Block a single malicious IP
+    CONNECTION DENY 1.2.3.4
+    
+    # Allow local loopback explicitly
+    CONNECTION ALLOW 127.0.0.1
+    
+    # Allow private network (10.0.0.0/8)
+    CONNECTION ALLOW 10.0.0.0/8
+END SECURITY
+
+HTTP 127.0.0.1:0
+    SECURITY firewall_basic
+    GET "/" BEGIN
+        context.SendString("firewall_ok");
+    END GET
+END HTTP

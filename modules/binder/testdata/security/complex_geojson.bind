@@ -1,0 +1,14 @@
+SECURITY complex_geojson
+    # FeatureCollection with multiple shapes (Paris-like areas)
+    GEOJSON complex_area "complex_zone.geojson"
+    
+    # Deny the complex area
+    CONNECTION DENY complex_area
+END SECURITY
+
+HTTP 127.0.0.1:0
+    SECURITY complex_geojson
+    GET "/" BEGIN
+        context.SendString("complex_ok");
+    END GET
+END HTTP

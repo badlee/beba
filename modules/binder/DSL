@@ -1,0 +1,112 @@
+// Regles DSL
+
+// * Les groupes de directives du DSL doivent obligatoirement contenir `DEFINE`.
+// * Les blocs de code ou de données doivent obligatoirement commencer par `BEGIN`.
+// * Toute directive pouvant recevoir un bloc de code ou de données doit également pouvoir accepter un fichier en entrée.
+// * Les middlewares (préfixés par `@`) doivent toujours être placés immédiatement après la directive.
+// * Les arguments doivent être positionnés en dernier : 
+//   * soit en fin de ligne,
+//   * soit après `BEGIN` ou `DEFINE`.
+
+// Les arguments sont des liste de cles valeurs separe par des espaces
+// soit key=valeur, soit key (dans ce cas la valeur est true)
+// Les argeuments peuvent etre encadre par des crochets `[....]` pour des besoin de lisibilite mais ils sont facultatif
+// les arguments viennent toujours en derniers, leur type dans go est `Arguments`
+// Ex. key=value ou [isDemo key2=value2 key3=value3 love='I\'m a string' message="I'm a string" to=`I'm a string`]
+
+// les strings sont des chaine de caracteres entre quotes ('"`) avec echapemnent
+
+// DIRECTIVES GLOBALES
+
+// Enregistrer un protocol 
+// le protocol est dans un fichier js
+REGISTER PROTOCOL NAME [filepath] [arguments...]?
+REGISTER PROTOCOL NAME BEGIN [arguments...]?
+ // JS CODE
+END REGISTER
+// Enregistrer un middleware 
+REGISTER MIDDLEWARE NAME [filepath] [arguments...]?
+REGISTER MIDDLEWARE NAME BEGIN [arguments...]?
+ // JS CODE
+END REGISTER
+// Declare les modules JS chargables
+REGISTER MODULE NAME [filepath] [arguments...]?
+REGISTER MODULE NAME BEGIN [arguments...]?
+ // JS CODE
+END REGISTER
+// Code a executer a chaques initialisation de VM
+REGISTER PRELOAD BEGIN [filepath] [arguments...]?
+REGISTER PRELOAD BEGIN [arguments...]?
+ // JS CODE
+END REGISTER
+
+// Protocol/Custom Directives
+[PROTOCOL] [literal quoted_string or uri/url] [arguments...]? // filepath est optionel (si defini il charge le js protocol ), une address c'est ipv4:port ou ipv6:port ou socket_filepath
+    // configuration lie au block
+    // Variabkes d'environement (Env Arguments, `ENV` dans js)
+    ENV PREFIX [prefix default={PROTOCOL}_]  // optionel ne charge que les valeurs ayant le prefix
+    ENV [filepath]  // optionel peut etre repeter, tout les valeurs du fichier sont chargees sont filtre
+
+    // Variabkes d'environement (Config Arguments, `CONF` dans js)
+    CONF [JSON|YAML|TOML|ENV] [filepath]  // optionel peut etre repeter
+    CONF [filepath]  // optionel Le type est detecte apartir de l'extension
+    SET [KEY] [value]  // optionel defini/ajoute des configurations 
+    DEF [KEY] [value]  // optionel defini/ajoute des configurations que si la cle key n'existe pas 
+    DEL [KEY]  // optionel supprime des configurations 
+
+    // Authentification
+    AUTH [JSON|YAML|TOML|ENV] [filepath] // fichier cle/valeur ou les cle sont les username et les valeurs sont les pwd (plain, bcrypt)
+    AUTH CSV [filepath] // fichier csv deux columns "username;pwd" ou les pwd sont plain ou bcrypt
+    AUTH USER [USER_NAME] [PWD] // declare un utilisateur ou les PWD est plain ou bcrypt, peut etre repeter
+    AUTH HANDLER [filepath] [arguments...]? // js file, expose user et pwd au js, `allow()` pour authorise, `reject(message)` pour rejeter
+    AUTH BEGIN [arguments...]? 
+        // js code, expose user et pwd au js, `allow()` pour authorise, `reject(message)` pour rejeter
+    END AUTH
+
+    // les custom directives  (l'interpretation depend du protocol, Routes *RouteConfig)
+     
+    // les middlewares sont des chaines(insensible a la case, toujour convertis en uppercase par le parser) commencant par @ pouvant avoir des arguments entre [...] (les crochets sont obligatoires)
+    // ex. @PRE (sans arguments, equivaut a @PRE[]), @LIMIT[time=30s blacklist=127.0.0.1,127.0.0.2] avec les arguments (time=30s blacklist=127.0.0.1,127.0.0.2) 
+
+    // le path_or_name est un literal (RegExp: [a-zA-Z0-9][a-zA-Z0-9\/\.\-_]*) ou un url path compatible avec fiber v3 (RegExp: ^\/(?:[a-zA-Z0-9._~-]+|:[a-zA-Z0-9_]+|\*)?(?:\/(?:[a-zA-Z0-9._~-]+|:[a-zA-Z0-9_]+|\*))*$)
+
+    // le Type est le type de donne il doit etre dans la liste suivante : JSON|YAML|TOML|ENV|TEMPLATE|HANDLER|FILE|BINARY|BASE32|BASE64|HEX
+    // JSON : Le block ou le fichier contient du json
+    // YAML : Le block ou le fichier contient du yaml
+    // TOML : Le block ou le fichier contient du toml
+    // ENV : Le block ou le fichier contient des cles valeur (fichier .env)
+    // TEMPLATE : Le block ou le fichier contient du text et doit etre traiter comme un template
+    // HANDLER : Le block ou le fichier contient du js et doit etre traiter comme do code a executer
+    // FILE : Le block ou le fichier contient des data qui ne seront pas interpreter (Ex. avec l'http les data sont envoyes sans traitement)
+    // BINARY : Le block ou le fichier contient des donnees binaires encode en binaire (base de 2)
+    // HEX : Le block ou le fichier contient des donnees binaires encode en base16
+    // BASE32 : Le block ou le fichier contient des donnees binaires encode en base32
+    // BASE64 : Le block ou le fichier contient des donnees binaires encode en base64
+
+    // Le ContentType doit etre eun mime type valide (https://developer.mozilla.org/en-US/docs/Web/HTTP/Basics_of_HTTP/MIME_types)
+    // pour la validation du mime type on peut utiliser la fonction go suivante
+    // ```go
+    // func IsMimeType(s string) bool {
+    //     _, _, err := mime.ParseMediaType(s)
+    //     return err == nil
+    // }
+    // ```
+
+    // le filepath doit etre un chemin de fichier valide et existant, toujours entre quotes ("'`), suporte l'echapemnent
+
+    //pour les custom directives nous avons 3 syntaxes
+
+    // Syntaxe inline (les donnees sont dans le fichier .bind) il contien toujours le texte BEGIN ... END [METHOD], avec les arguments qui sont facultatif
+    // [METHOD] [middlewares...]? [path_or_name]? [TYPE]? [ContentType]? BEGIN [arguments...]?
+    //    // Contenu inline depend du type
+    // END [METHOD]
+
+    // Syntaxe non-inline (les donnees sont dans un fichier externe) avec les arguments qui sont facultatif
+    // [METHOD] [middlewares...]? [path_or_name]? [TYPE]? [ContentType]? [filepath]? [arguments...]?
+    
+    // Syntaxe groupe de directives, contient toujours le mot cle DEFINE et se termine par END [METHOD]
+    // il contient une list de directives (inline, group, non-inline) avec les arguments qui sont facultatif
+    // [METHOD] [middlewares...]? [path_or_name] DEFINE [arguments...]?
+    //     // list des methodes (inline, group, non-inline)
+    // END [METHOD]
+END [PROTOCOL]

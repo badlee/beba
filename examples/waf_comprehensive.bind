@@ -1,0 +1,81 @@
+# Comprehensive Coraza WAF Example
+# This example demonstrates full SECURITY protocol features:
+# - OWASP CRS integration (mocked path)
+# - Custom Rules definitions
+# - Lifecycle Hooks via @processor
+# - Route-level WAF overrides
+
+SECURITY global_waf [default]
+    ENGINE On
+    
+    # 1. Ruleset Integration (Reference to SecInclude)
+    # OWASP ./coreruleset/*.conf 
+
+    # 2. Custom Rule Definitions (Reference to SecRule)
+    RULES DEFINE
+        # Block requests with 'exec' in query string (Command Injection mock)
+        RULE "ARGS_GET:cmd" "@contains exec" "id:1001,phase:2,deny,status:403,msg:'Command Injection attempt detected'"
+        
+        # Rate limiting mock rule (using WAF phases)
+        RULE "REQUEST_HEADERS:X-Rate-Limit" "@gt 100" "id:1002,phase:1,deny,status:429,msg:'Rate limit exceeded'"
+        
+        # Rule Removal example (e.g. disabling a specific OWASP rule)
+        REMOVE ID 942100
+        
+        # Rule Update example (changing action for a rule)
+        UPDATE ACTION 941100 "deny,status:403,log"
+    END RULES
+
+    # 4. Markers and Flow Control
+    MARKER "BEGIN_APP_RULES"
+    RULES DEFINE
+        RULE "REQUEST_URI" "@beginsWith /admin" "id:2001,phase:1,chain,nolog,pass"
+        RULE "REMOTE_ADDR" "@ipMatch 192.168.1.0/24" "id:2002,phase:1,allow"
+    END RULES
+    
+    # 5. Lifecycle Hooks with JS
+    # Triggered when WAF interrupts a request
+    ON INTERRUPTED BEGIN
+        log("SECURITY ALERT: Connection from " + context.IP() + " blocked due to: " + tx.InterruptedReason());
+        context.Set("X-WAF-Status", "Blocked");
+    END ON
+
+    # Triggered at the logging phase
+    ON LOGGING BEGIN
+        # Custom logging logic: send to an external system or file
+        # log("Logging WAF transaction: " + tx.ID());
+    END ON
+END SECURITY
+
+# Specialized WAF for public API
+SECURITY api_waf
+    ENGINE On
+    REQUEST DEFINE
+        LIMIT 1mb # Request body buffering limit
+    END REQUEST
+    
+    ON REQUEST_HEADERS BEGIN
+        context.Set("X-API-Scanned", "true");
+    END ON
+END SECURITY
+
+HTTP 127.0.0.1:18293
+    # Apply global_waf by default level (inherited from default above)
+    SECURITY global_waf
+
+    # Simple protected route
+    GET "/" BEGIN
+        context.SendString("Welcome to the secure server!");
+    END GET
+
+    # Route with specialized WAF
+    GET @SECURITY[api_waf] "/api/data" BEGIN
+        context.SendString("API Data (Scan: " + context.Get("X-API-Scanned") + ")");
+    END GET
+
+    # Completely unsecure route (bypass WAF)
+    GET @UNSECURE "/public/status" BEGIN
+        context.SendString("Public Status: OK");
+    END GET
+
+END HTTP

@@ -1,0 +1,14 @@
+SECURITY mqtt_filter [default]
+    CONNECTION DENY "1.2.3.4"
+    CONNECTION ALLOW "127.0.0.1"
+END SECURITY
+
+TCP "127.0.0.1:0"
+    MQTT ":0"
+        SECURITY "mqtt_filter"
+        
+        AUTH BEGIN
+            allow();
+        END AUTH
+    END MQTT
+END TCP

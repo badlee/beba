@@ -1,0 +1,23 @@
+SECURITY geojson_complex
+    # 1. Define a named zone containing multiple disparate areas (FeatureCollection)
+    GEOJSON multiple_zones BEGIN
+        {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "properties": { "name": "Zone A" },
+                    "geometry": { "type": "Polygon", "coordinates": [[[2,48],[3,48],[3,49],[2,49],[2,48]]] }
+                },
+                {
+                    "type": "Feature",
+                    "properties": { "name": "Zone B" },
+                    "geometry": { "type": "Polygon", "coordinates": [[[9,0],[10,0],[10,1],[9,1],[9,0]]] }
+                }
+            ]
+        }
+    END POINT
+
+    # 2. Deny any connection from these zones
+    CONNECTION DENY multiple_zones
+END SECURITY

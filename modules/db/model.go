@@ -3,6 +3,7 @@ package db
 import (
 	"encoding/json"
 	"fmt"
+	"http-server/plugins/js"
 	"reflect"
 	"strconv"
 	"strings"
@@ -85,8 +86,8 @@ func (m *Model) runHooks(hookType, action string, doc *Document) {
 			jsDoc := doc.ToJSObject(m.Schema.vm)
 
 			// Exécuter le hook avec jsDoc comme 'this'
-			wrappedCode := fmt.Sprintf("(%s)", h.Fn)
-			fnVal, err := m.Schema.vm.RunString(wrappedCode)
+			hookCode := js.GetFunction(strings.TrimSpace(h.Fn), "function(next) { %s; if(typeof next === 'function') next(); }")
+			fnVal, err := m.Schema.vm.RunString(hookCode)
 			if err == nil {
 				if fn, ok := goja.AssertFunction(fnVal); ok {
 					_, err = fn(jsDoc)

@@ -13,7 +13,7 @@
     <script server>
         const sse = require("sse");
 
-        // Broadcast to news channel
+        // Broadcast to 'news' channel on the unified Hub (works for both SSE and WebSocket clients)
         sse.to("news").publish("update", "Breaking: Named channels implemented! at " + new Date().toLocaleTimeString());
     </script>
 

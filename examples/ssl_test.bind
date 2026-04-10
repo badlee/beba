@@ -1,0 +1,18 @@
+# SSL Test: Manual and Auto
+# Note: SSL AUTO requires a real domain for Let's Encrypt, here we test parsing.
+
+# Manual SSL
+HTTPS 127.0.0.1:8787
+    SSL key.pem cert.pem
+    GET "/" BEGIN
+        context.SendString("Response from Secure HTTP (Manual Cert)");
+    END GET
+END HTTPS
+
+# Auto SSL (Let's Encrypt)
+HTTPS 127.0.0.1:8686
+    SSL AUTO example.com admin@example.com
+    GET "/" BEGIN
+        context.SendString("Response from Secure HTTP (Auto SSL)");
+    END GET
+END HTTPS

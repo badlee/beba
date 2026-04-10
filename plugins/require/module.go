@@ -1,8 +1,8 @@
 package require
 
 import (
+	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -13,11 +13,15 @@ import (
 	"syscall"
 	"text/template"
 
+	"github.com/joho/godotenv"
+	"github.com/pelletier/go-toml/v2"
+	"gopkg.in/yaml.v3"
+
 	js "github.com/dop251/goja"
 	"github.com/dop251/goja/parser"
 )
 
-type ModuleLoader[T any] func(T, *js.Runtime, *js.Object)
+type ModuleLoader func(any, *js.Runtime, *js.Object)
 
 // SourceLoader represents a function that returns a file data at a given path.
 // The function should return ModuleFileDoesNotExistError if the file either doesn't exist or is a directory.
@@ -41,10 +45,10 @@ var (
 var native, builtin map[string]any
 
 // Registry contains a cache of compiled modules which can be used by multiple Runtimes
-type Registry[T any] struct {
+type Registry struct {
 	sync.Mutex
-	instance T
-	native   map[string]ModuleLoader[T]
+	instance any
+	native   map[string]ModuleLoader
 	compiled map[string]*js.Program
 
 	srcLoader     SourceLoader
@@ -52,51 +56,50 @@ type Registry[T any] struct {
 	globalFolders []string
 }
 
-type RequireModule[T any] struct {
-	r           *Registry[T]
+type RequireModule struct {
+	r           *Registry
 	runtime     *js.Runtime
 	modules     map[string]*js.Object
 	nodeModules map[string]*js.Object
 }
 
-func NewRegistry[T any](opts ...Option[T]) *Registry[T] {
-	r := &Registry[T]{}
+func NewRegistry(opts ...Option) *Registry {
+	r := &Registry{}
 
 	for _, opt := range opts {
 		opt(r)
 	}
-	fmt.Printf("SET INSTANCE %v\n\n\n", r.instance)
 
 	return r
 }
 
-func NewRegistryWithLoader[T any](instance T, srcLoader SourceLoader) *Registry[T] {
-	return NewRegistry(WithInstance(instance), WithLoader[T](srcLoader))
+func NewRegistryWithLoader(instance any, srcLoader SourceLoader) *Registry {
+	return NewRegistry(WithInstance(instance), WithLoader(srcLoader))
 }
 
-type Option[T any] func(*Registry[T])
+type Option func(*Registry)
 
 // WithLoader sets a function which will be called by the require() function in order to get a source code for a
 // module at the given path. The same function will be used to get external source maps.
 // Note, this only affects the modules loaded by the require() function. If you need to use it as a source map
 // loader for code parsed in a different way (such as runtime.RunString() or eval()), use (*Runtime).SetParserOptions()
-func WithLoader[T any](srcLoader SourceLoader) Option[T] {
-	return func(r *Registry[T]) {
+func WithLoader(srcLoader SourceLoader) Option {
+	return func(r *Registry) {
 		r.srcLoader = srcLoader
 	}
 }
 
 // WithInstance sets the instance to be used by the registry.
-func WithInstance[T any](instance T) Option[T] {
-	return func(r *Registry[T]) {
+func WithInstance(instance any) Option {
+	return func(r *Registry) {
 		r.instance = instance
 	}
 }
 
 // WithPathResolver sets a function which will be used to resolve paths (see PathResolver). If not specified, the
 // DefaultPathResolver is used.
-func WithPathResolver[T any](pathResolver PathResolver) Option[T] {
-	return func(r *Registry[T]) {
+func WithPathResolver(pathResolver PathResolver) Option {
+	return func(r *Registry) {
 		r.pathResolver = pathResolver
 	}
 }
@@ -108,15 +111,15 @@ func WithPathResolver[T any](pathResolver PathResolver) Option[T] {
 // list is $NODE_PATH, $HOME/.node_modules, $HOME/.node_libraries and
 // $PREFIX/lib/node, see
 // https://nodejs.org/api/modules.html#modules_loading_from_the_global_folders.
-func WithGlobalFolders[T any](globalFolders ...string) Option[T] {
-	return func(r *Registry[T]) {
+func WithGlobalFolders(globalFolders ...string) Option {
+	return func(r *Registry) {
 		r.globalFolders = globalFolders
 	}
 }
 
 // Enable adds the require() function to the specified runtime.
-func (r *Registry[T]) Enable(runtime *js.Runtime) *RequireModule[T] {
-	rrt := &RequireModule[T]{
+func (r *Registry) Enable(runtime *js.Runtime) *RequireModule {
+	rrt := &RequireModule{
 		r:           r,
 		runtime:     runtime,
 		modules:     make(map[string]*js.Object),
@@ -127,12 +130,12 @@ func (r *Registry[T]) Enable(runtime *js.Runtime) *RequireModule[T] {
 	return rrt
 }
 
-func (r *Registry[T]) RegisterNativeModule(name string, loader ModuleLoader[T]) {
+func (r *Registry) RegisterNativeModule(name string, loader ModuleLoader) {
 	r.Lock()
 	defer r.Unlock()
 
 	if r.native == nil {
-		r.native = make(map[string]ModuleLoader[T])
+		r.native = make(map[string]ModuleLoader)
 	}
 	name = filepathClean(name)
 	r.native[name] = loader
@@ -180,7 +183,7 @@ func DefaultPathResolver(base, path string) string {
 	return p
 }
 
-func (r *Registry[T]) getSource(p string) ([]byte, error) {
+func (r *Registry) getSource(p string) ([]byte, error) {
 	srcLoader := r.srcLoader
 	if srcLoader == nil {
 		srcLoader = DefaultSourceLoader
@@ -188,7 +191,7 @@ func (r *Registry[T]) getSource(p string) ([]byte, error) {
 	return srcLoader(p)
 }
 
-func (r *Registry[T]) getCompiledSource(p string) (*js.Program, error) {
+func (r *Registry) getCompiledSource(p string) (*js.Program, error) {
 	r.Lock()
 	defer r.Unlock()
 
@@ -201,7 +204,43 @@ func (r *Registry[T]) getCompiledSource(p string) (*js.Program, error) {
 		s := string(buf)
 
 		if filepath.Ext(p) == ".json" {
-			s = "module.exports = JSON.parse('" + template.JSEscapeString(s) + "')"
+			s = "module.exports = (" + s + ")"
+		} else if filepath.Ext(p) == ".yaml" {
+			data := make(map[string]string)
+
+			if err := yaml.Unmarshal([]byte(s), &data); err != nil {
+				s = "throw new Error('" + template.JSEscapeString(err.Error()) + "')"
+			} else {
+
+				if b, err := json.Marshal(data); err != nil {
+					s = "throw new Error('" + template.JSEscapeString(err.Error()) + "')"
+				} else {
+					s = "module.exports = (" + string(b) + ")"
+				}
+			}
+		} else if filepath.Ext(p) == ".toml" {
+			data := make(map[string]string)
+			if err := toml.Unmarshal([]byte(s), &data); err != nil {
+				s = "throw new Error('" + template.JSEscapeString(err.Error()) + "')"
+			} else {
+
+				if b, err := json.Marshal(data); err != nil {
+					s = "throw new Error('" + template.JSEscapeString(err.Error()) + "')"
+				} else {
+					s = "module.exports = (" + string(b) + ")"
+				}
+			}
+		} else if filepath.Ext(p) == ".env" {
+			if data, err := godotenv.Unmarshal(s); err != nil {
+				s = "throw new Error('" + template.JSEscapeString(err.Error()) + "')"
+			} else {
+
+				if b, err := json.Marshal(data); err != nil {
+					s = "throw new Error('" + template.JSEscapeString(err.Error()) + "')"
+				} else {
+					s = "module.exports = (" + string(b) + ")"
+				}
+			}
 		}
 
 		source := "(function(exports,require,module,__filename,__dirname){" + s + "\n})"
@@ -221,7 +260,7 @@ func (r *Registry[T]) getCompiledSource(p string) (*js.Program, error) {
 	return prg, nil
 }
 
-func (r *RequireModule[T]) require(call js.FunctionCall) js.Value {
+func (r *RequireModule) require(call js.FunctionCall) js.Value {
 	ret, err := r.Require(call.Argument(0).String())
 	if err != nil {
 		if _, ok := err.(*js.Exception); !ok {
@@ -237,7 +276,7 @@ func filepathClean(p string) string {
 }
 
 // Require can be used to import modules from Go source (similar to JS require() function).
-func (r *RequireModule[T]) Require(p string) (ret js.Value, err error) {
+func (r *RequireModule) Require(p string) (ret js.Value, err error) {
 	module, err := r.resolve(p)
 	if err != nil {
 		return
@@ -265,7 +304,7 @@ func Require[T any](runtime *js.Runtime, name string) js.Value {
 // The binding is global and affects all instances of Registry.
 // It should be called from a package init() function as it may not be used concurrently with require() calls.
 // For registry-specific bindings see Registry.RegisterNativeModule.
-func RegisterNativeModule[T any](name string, loader ModuleLoader[T]) {
+func RegisterNativeModule(name string, loader ModuleLoader) {
 	if native == nil {
 		native = make(map[string]any)
 	}
@@ -277,7 +316,7 @@ func RegisterNativeModule[T any](name string, loader ModuleLoader[T]) {
 // will also be loadable as "node:<name>". Hence, for "builtin" modules (such as buffer, console, etc.)
 // the name should not include the "node:" prefix, but for prefix-only core modules (such as "node:test")
 // it should include the prefix.
-func RegisterCoreModule[T any](name string, loader ModuleLoader[T]) {
+func RegisterCoreModule(name string, loader ModuleLoader) {
 	if builtin == nil {
 		builtin = make(map[string]any)
 	}

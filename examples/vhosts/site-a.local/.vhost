@@ -1,0 +1,6 @@
+domain  = "site-a.local"
+aliases = ["www.site-a.local"]
+
+http {
+  port = 8080
+}

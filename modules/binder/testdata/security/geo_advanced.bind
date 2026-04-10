@@ -1,0 +1,19 @@
+SECURITY geo_advanced
+    GEOIP_DB "/Users/hobb/Dev/tools/http-server/data/GeoLite2-City.mmdb"
+    
+    # Block China
+    CONNECTION DENY CN
+    
+    # Allow France explicitly
+    CONNECTION ALLOW FR
+    
+    # High precision area in Paris (5-digit plus code)
+    CONNECTION ALLOW "889CM4V2+PQ"
+END SECURITY
+
+HTTP 127.0.0.1:0
+    SECURITY geo_advanced
+    GET "/" BEGIN
+        context.SendString("geo_ok");
+    END GET
+END HTTP

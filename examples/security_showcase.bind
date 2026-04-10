@@ -1,0 +1,53 @@
+# Security & Middleware Showcase
+# This example demonstrates the advanced security features and named middlewares of Fiber v3.
+
+HTTP 0.0.0.0:8080
+    SET APP_NAME "SecurityShowcase"
+    
+    # Global Auth with SHA-256 (password: "secret")
+    AUTH USER "admin" "{SHA256}K7gNU3sdo+OL0wNhqoVWhr3g6s1xYv72ol/pe/Unols="
+
+    # 1. Basic JSON route with CORS enabled
+    GET @CORS[origins="*" methods="GET"] "/api/ping" JSON BEGIN
+        {"status": "online", "server": settings.APP_NAME}
+    END GET
+
+    # 2. Protected admin route with rate limiting and security headers
+    # Uses @HELMET for standard security headers
+    # Uses @LIMITER to prevent brute force (max 5 requests per minute)
+    # Uses @ADMIN to enforce authentication with a custom redirect
+    GET @HELMET @LIMITER[max=5 expiration="1m"] @ADMIN[redirect="/login" message="Forbidden Access"] "/admin/dashboard" TEMPLATE text/html BEGIN
+        <h1>Admin Dashboard</h1>
+        <p>Welcome, admin! You are authorized.</p>
+    END GET
+
+    # 3. CSRF protected form submission
+    # @CSRF injects the token and validates it on POST
+    GET @CSRF "/form" TEMPLATE text/html BEGIN
+        <form method="POST" action="/submit">
+            <input type="hidden" name="_csrf" value="{{.csrfToken}}">
+            <button type="submit">Submit Securely</button>
+        </form>
+    END GET
+
+    POST @CSRF "/submit" JSON BEGIN
+        {"status": "success", "message": "Form submitted with valid CSRF token"}
+    END POST
+
+    # 4. Idempotent API endpoint
+    # Prevents duplicate processing of the same request
+    POST @IDEMPOTENCY[expiration="1h"] "/api/orders" JSON BEGIN
+        {"orderId": "12345", "status": "processed"}
+    END POST
+
+    # 5. Monitoring & Health
+    GET @HEALTH "/health"
+    GET @PPROF "/debug/pprof"
+
+    # 6. Fallback login page
+    GET "/login" TEMPLATE text/html BEGIN
+        <h1>Login Required</h1>
+        <p>Please authenticate via Basic Auth or your session.</p>
+    END GET
+
+END HTTP

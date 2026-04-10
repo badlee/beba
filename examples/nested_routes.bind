@@ -1,0 +1,31 @@
+// Exemple de configuration contenant des sous-routes imbriquées grâce à DEFINE.
+
+DATABASE 'postgres://user:pass@localhost:5432/mydb'
+    SCHEMA user DEFINE
+        FIELD name string [required]
+        FIELD email string [required]
+        FIELD age number
+        FIELD roles array
+        
+        VIRTUAL fullName BEGIN
+            done(this.firstName + ' ' + lastName); 
+        END VIRTUAL
+
+        HOOK @PRE save BEGIN
+            console.log('Saving ' + name);
+        END HOOK 
+
+        METHOD sayHello BEGIN
+            done("Hello, I am " + name);
+        END METHOD
+
+        STATIC findByEmail BEGIN
+            done(findOne({ email: email }));
+        END STATIC
+    END SCHEMA
+
+    SCHEMA post DEFINE
+        FIELD title string [required]
+        FIELD author ref(user)
+    END SCHEMA
+END DATABASE

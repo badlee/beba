@@ -1,0 +1,40 @@
+# realtime_showcase.bind
+# Demonstration of the Unified Real-time Hub (SSE, WS, MQTT, Socket.IO)
+
+HTTP 0.0.0.0:8080
+    # 1. Server-Sent Events (SSE)
+    # Accessible via: new EventSource("/events")
+    SSE /events
+
+    # 2. Native WebSockets (WS)
+    # Accessible via: new WebSocket("ws://localhost:8080/ws")
+    WS /ws
+
+    # 3. Socket.IO (IO)
+    # Compatible with Socket.IO clients, mapped to the Hub
+    IO /socket.io
+
+    # 4. MQTT over WebSockets
+    # Accessible via MQTT clients on ws://localhost:8080/mqtt
+    MQTT /mqtt [auth=false]
+
+    # Dashboard to see it in action
+    GET "/" TEMPLATE text/html BEGIN
+        <!DOCTYPE html>
+        <html>
+        <head><title>Real-time Showcase</title></head>
+        <body>
+            <h1>Unified Hub Showcase</h1>
+            <p>Publish a message via any protocol, it will be received by all!</p>
+            <script>
+                // Example: Listening via SSE
+                const es = new EventSource("/events");
+                es.onmessage = (e) => console.log("SSE Received:", e.data);
+
+                // Example: Publishing via Fetch to the Hub (SSE module provides sse global in scripts)
+                // Note: In server-side scripts, use sse.publish("global", "evt", "data")
+            </script>
+        </body>
+        </html>
+    END GET
+END HTTP

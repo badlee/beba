@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebSocket & Hub Example</title>
+    <style>
+        body { font-family: system-ui, sans-serif; max-width: 600px; margin: 2rem auto; }
+        .chat-box { border: 1px solid #ccc; padding: 1rem; border-radius: 8px; height: 300px; overflow-y: auto; background: #fafafa; }
+        .msg { margin: 0.5rem 0; padding: 0.5rem; border-radius: 4px; background: #e0f7fa; }
+        .system-msg { color: #666; font-style: italic; font-size: 0.9rem; }
+        .controls { margin-top: 1rem; display: flex; gap: 0.5rem; }
+        input { flex: 1; padding: 0.5rem; }
+        button { padding: 0.5rem 1rem; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        button:hover { background: #0056b3; }
+    </style>
+</head>
+<body>
+    <h1>WebSocket Chat (Sharded Hub)</h1>
+    <p>This example demonstrates bidirectional WebSocket communication via the new high-performance Hub.</p>
+    
+    <div class="chat-box" id="messages"></div>
+    
+    <div class="controls">
+        <input type="text" id="msgInput" placeholder="Type a message..." onkeypress="if(event.key === 'Enter') sendMsg()" />
+        <button onclick="sendMsg()">Send</button>
+    </div>
+
+    <script server>
+        // Server-side Javascript execution allows us to interact with the Hub proactively
+        const sse = require("sse");
+        
+        // Let's publish a welcome message to the "chat" channel when this page is rendered
+        sse.to("chat").publish("system", "Hub initialized. WebSocket endpoints are ready to accept connections.");
+    </script>
+
+    <script>
+        // Connect to the generic fiber WebSocket handler, subscribing to "global" and "chat" channels
+        const clientId = "user_" + Math.floor(Math.random() * 10000);
+        const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const ws = new WebSocket(`${protocol}//${location.host}/ws/${clientId}/chat`);
+
+        const messagesDiv = document.getElementById("messages");
+
+        function appendMessage(text, isSystem = false) {
+            const div = document.createElement("div");
+            div.className = isSystem ? "system-msg" : "msg";
+            div.textContent = text;
+            messagesDiv.appendChild(div);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        ws.onopen = () => {
+            appendMessage("✓ Connected to WebSocket endpoint as " + clientId, true);
+        };
+
+        ws.onmessage = (event) => {
+            try {
+                // The Hub serializes standard Message objects to JSON: {"channel": "...", "event": "...", "data": "..."}
+                const msg = JSON.parse(event.data);
+                
+                // Note: heartbeat pings are handled natively by WebSocket protocol in the new Hub architecture, 
+                // so we don't need to filter them out manually like we did for pure SSE.
+                appendMessage(`[${msg.channel}] ${msg.event}: ${msg.data}`);
+            } catch (e) {
+                appendMessage("Raw message: " + event.data, true);
+            }
+        };
+
+        ws.onclose = () => {
+            appendMessage("✗ Connection closed", true);
+        };
+
+        ws.onerror = (err) => {
+            appendMessage("⚠ WebSocket error detected. See console for details.", true);
+            console.error(err);
+        };
+
+        function sendMsg() {
+            const input = document.getElementById("msgInput");
+            if (!input.value.trim()) return;
+
+            // Send standard JSON format that WSHandler expects to publish
+            const payload = {
+                channel: "chat", // If omitted, defaults to "global"
+                event: "user_msg",
+                data: input.value
+            };
+            ws.send(JSON.stringify(payload));
+            input.value = "";
+        }
+    </script>
+</body>
+</html>

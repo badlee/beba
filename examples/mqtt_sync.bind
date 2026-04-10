@@ -1,0 +1,48 @@
+# MQTT-Hub Sync Example
+# 
+# Demonstrates bidirectional synchronization between MQTT (Binary) and SSE Hub (Text).
+#
+# Run: ./http-server --bind examples/mqtt_sync.bind
+#
+# Testing:
+#   MQTT -> Hub: Publish to 'home/temp' via MQTT, see it in SSE Hub.
+#   Hub -> MQTT: Publish to 'home/temp' via Hub API, see it in MQTT.
+
+HTTP 127.0.0.1:9400
+    # SSE Hub Endpoint
+    SSE /sse
+    
+    # MQTT Broker over WebSocket
+    MQTT /mqtt
+    
+    # Landing Page
+    GET "/" TEXT BEGIN
+        "MQTT-Hub Synchronization Demo\n" +
+        "-----------------------------\n" +
+        "MQTT Endpoint: ws://127.0.0.1:9400/mqtt\n" +
+        "SSE  Endpoint: http://127.0.0.1:9400/sse\n"
+    END GET
+
+    # Helper API to trigger Hub messages from curl
+    POST "/api/publish" JS BEGIN
+        try {
+            const sse = require("sse");
+            let body = context.Body();
+            if (typeof body !== 'string') {
+                body = String.fromCharCode.apply(null, new Uint8Array(body));
+            }
+            let data = JSON.parse(body);
+            let topic = data.topic || "test";
+            let payload = data.payload || "hello";
+            
+            print("API publish: topic=" + topic + " payload=" + payload);
+            sse.to(topic).publish(topic, payload);
+            
+            return { "status": "sent", "topic": topic };
+        } catch (e) {
+            print("JS Error: " + e);
+            throw e;
+        }
+    END POST
+
+END HTTP

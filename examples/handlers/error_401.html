@@ -1,0 +1,14 @@
+<?js
+  var err_code = 401;
+  var err_title = "Non Autorisé";
+  var err_path = context.Path();
+?>
+<!DOCTYPE html>
+<html lang="fr">
+<head><meta charset="utf-8"><title>Erreur {{err_code}}</title></head>
+<body>
+  <h1>{{err_code}} – {{err_title}}</h1>
+  <p>Chemin demandé : <code>{{err_path}}</code></p>
+  <a href="/">Retour à l'accueil</a>
+</body>
+</html>

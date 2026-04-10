@@ -1,0 +1,16 @@
+domain  = "site-b.local"
+aliases = ["www.site-b.local"]
+
+email = "hello@site-b.local"
+cert  = "../../cert.pem"
+key   = "../../key.pem"
+
+# HTTPS avec certificats manuels
+https {
+  port = 443
+}
+
+# HTTP pour la redirection ACME
+http {
+  port = 80
+}

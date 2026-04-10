@@ -1,5 +1,8 @@
-data/*
-logs/*
+node_modules
+.data
+data
+logs
+/*.txt
 stderr.log
 stdout.log
 *.db
@@ -9,3 +12,6 @@ stdout.log
 http-server.pid
 http-server
 .vscode
+*.db
+*.db-shm
+*.db-wal

@@ -1,0 +1,51 @@
+# Test: REWRITE et REDIRECT
+# Commandes de test:
+#   curl http://127.0.0.1:8585/old/hello      → REWRITE → /new/hello
+#   curl -si http://127.0.0.1:8585/jump | grep Location   → REDIRECT 302 → /target
+#   curl -si http://127.0.0.1:8585/blog/(.*)  → REDIRECT 301 → /articles/$1
+#
+# Syntaxes canoniques:
+#   REWRITE pattern sub [js_cond]
+#   REDIRECT [code] pattern sub [js_cond]
+
+HTTP 127.0.0.1:8585
+    # REWRITE sans condition
+    REWRITE "/old/(.*)" "/new/$1"
+
+    # REWRITE avec condition JS (ne réécrire que si méthode GET)
+    REWRITE "/int/(.*)" "/api/$1" Method() === "GET"
+
+    # REDIRECT permanent (301) sans condition
+    REDIRECT 301 "/blog/(.*)" "/articles/$1"
+
+    # REDIRECT avec code par défaut (302) – code omis
+    REDIRECT "/jump" "/target"
+
+    # REDIRECT avec condition JS
+    REDIRECT 302 "/secure/(.*)" "/login?next=/secure/$1" !Get("Authorization")
+
+    GET "/new/:slug" BEGIN
+        context.JSON({ rewritten: true, slug: context.Params("slug") });
+    END GET
+
+    GET "/api/:slug" BEGIN
+        context.JSON({ rewritten_api: true, slug: context.Params("slug") });
+    END GET
+
+    GET "/articles/:slug" BEGIN
+        context.JSON({ redirect_from_blog: true, slug: context.Params("slug") });
+    END GET
+
+    GET "/target" BEGIN
+        context.SendString("Redirected successfully to target");
+    END GET
+
+    GET "/login" BEGIN
+        context.JSON({ login: true, next: context.Query("next", "/") });
+    END GET
+
+    ERROR 404 BEGIN
+        context.Status(404).JSON({ error: "not found", path: context.Path() });
+    END ERROR
+
+END HTTP

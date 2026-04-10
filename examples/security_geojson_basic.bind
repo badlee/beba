@@ -1,0 +1,16 @@
+SECURITY geojson_basic
+    # 1. Defined a named GeoJSON zone from a single Feature or Geometry
+    GEOJSON office_zone BEGIN
+        {
+            "type": "Feature",
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [[[2.2, 48.8], [2.3, 48.8], [2.3, 48.9], [2.2, 48.9], [2.2, 48.8]]]
+            },
+            "properties": { "name": "Headquarters" }
+        }
+    END POINT
+
+    # 2. Apply it to connections (Allow only this zone)
+    CONNECTION ALLOW office_zone
+END SECURITY

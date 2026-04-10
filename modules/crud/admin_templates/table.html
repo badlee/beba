@@ -1,0 +1,63 @@
+<div class="table-responsive">
+  <table class="table table-hover align-middle mb-0">
+    <thead>
+      <tr>
+        <th class="ps-4">ID</th>
+        <th>Data Preview</th>
+        <th>Created</th>
+        <th>Updated</th>
+        <th class="text-end pe-4" style="width:120px">Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      <?js
+        var parsedDocs = JSON.parse(settings.documents || '[]') || [];
+        parsedDocs.forEach(function(d) {
+          if (d.id) d.shortId = d.id.substring(0, 8);
+          d.dataString = JSON.stringify(d.data || {}).substring(0, 60);
+        });
+        var hasDocs = parsedDocs.length > 0;
+      ?>
+      {{^hasDocs}}
+      <tr>
+        <td colspan="5" class="text-center py-5 text-muted">
+          <i class="bi bi-file-earmark-x fs-1 opacity-25"></i>
+          <p class="mt-2">No documents found in this collection.</p>
+        </td>
+      </tr>
+      {{/hasDocs}}
+      {{#parsedDocs}}
+      <tr>
+        <td class="ps-4">
+          <span class="badge bg-light text-dark border font-monospace" style="font-size: 11px;">{{shortId}}</span>
+        </td>
+        <td>
+          <div class="text-truncate text-muted font-monospace" style="max-width:300px; font-size: 12px;" title="{{dataString}}">
+            {{dataString}}...
+          </div>
+        </td>
+        <td><small class="text-muted">{{created_at}}</small></td>
+        <td><small class="text-muted">{{updated_at}}</small></td>
+        <td class="text-end pe-4">
+          <div class="btn-group">
+            <a href="{{adminPrefix}}/collections/{{schemaSlug}}/{{id}}" 
+               hx-get="{{adminPrefix}}/collections/{{schemaSlug}}/{{id}}" 
+               hx-target="#main-content" 
+               hx-push-url="true"
+               class="btn btn-sm btn-outline-primary border-0" title="Edit">
+              <i class="bi bi-pencil-square"></i>
+            </a>
+            <button class="btn btn-sm btn-outline-danger border-0"
+              hx-delete="{{apiPrefix}}/{{schemaSlug}}/{{id}}"
+              hx-target="closest tr" hx-swap="outerHTML"
+              hx-confirm="Delete this document?"
+              title="Delete">
+              <i class="bi bi-trash"></i>
+            </button>
+          </div>
+        </td>
+      </tr>
+      {{/parsedDocs}}
+    </tbody>
+  </table>
+</div>

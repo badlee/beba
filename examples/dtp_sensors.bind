@@ -1,0 +1,33 @@
+TCP 0.0.0.0:8080
+    // Authentification des appareils via CSV
+    // Format: deviceID;secret;useProto
+    AUTH CSV "devices.csv"
+
+    DTP
+        // Handler pour les données de capteurs (Subtype SENSOR_DATA)
+        DATA "SENSOR_DATA" BEGIN
+            print(`[DTP] Données capteur de ${device.DeviceID}: ${payload}`);
+        END DATA
+
+        // On peut aussi utiliser des codes Hex pour les nouveaux types
+        CMD 0x01 BEGIN
+            print(`[DTP] Commande spécifique 0x01 reçue de ${device.DeviceID}`);
+        END CMD
+
+        // Handler générique pour le reste
+        QUEUE BEGIN
+            print(`[DTP] Paquet inconnu de ${deviceID}: ${msgType}/${subtype}`);
+        END QUEUE
+
+        ONLINE BEGIN
+            print(`[DTP] Appareil connecté: ${deviceID}`);
+        END ONLINE
+    END DTP
+
+    // On peut aussi avoir du HTTP sur le même port !
+    HTTP
+        GET "/status" BEGIN
+            context.SendString("DTP Server is running");
+        END GET
+    END HTTP
+END TCP

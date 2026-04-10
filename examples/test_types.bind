@@ -1,0 +1,89 @@
+# Fichier de Test: Directives ERROR et toutes les VARIANTES DE TYPE
+# Pour tester:
+# curl -i http://127.0.0.1:8787/error-401        -> Erreur 401 via JS
+# curl -i http://127.0.0.1:8787/error-403        -> Erreur 403 via TEMPLATE fichier
+# curl -i http://127.0.0.1:8787/error-500        -> Erreur 500 via TEXT inline
+# curl -i http://127.0.0.1:8787/error-503        -> Erreur 503 via HANDLER externe
+# curl -i http://127.0.0.1:8787/data-hex         -> GET 200 via HEX inline
+# curl -i http://127.0.0.1:8787/data-b64         -> GET 200 via BASE64 inline
+# curl -i http://127.0.0.1:8787/data-json        -> GET 200 via JSON inline
+
+HTTP 127.0.0.1:8787
+    SET APP_VERSION "1.2.3"
+
+    # ==========================
+    # TESTS TYPES SUR LA DIRECTIVE [METHOD]
+    # ==========================
+
+    # 1. Inline JS par défaut (pas de type)
+    GET "/error-401" BEGIN
+        throwError(401, "Trigger 401"); 
+    END GET
+
+    # 2. Inline TEXT
+    GET "/error-500" BEGIN
+        throwError(500, "Trigger 500");
+    END GET
+
+    # 3. Handler Externe (HANDLER JS)
+    GET "/error-503" BEGIN
+        throwError(503, "Trigger 503");
+    END GET
+
+    # 4. Handler Externe HTML (TEMPLATE/FILE)
+    GET "/error-403" BEGIN
+        throwError(403, "Trigger 403");
+    END GET
+
+    # 5. Type HEX (ex: "Hello" en hex)
+    GET "/data-hex" HEX text/plain BEGIN
+        48656c6c6f20486578
+    END GET
+
+    # 6. Type BASE64 (ex: "Hello Base64" en base64)
+    GET "/data-b64" BASE64 text/plain BEGIN
+        SGVsbG8gQmFzZTY0
+    END GET
+
+    # 7. Type JSON
+    POST "/data-json" JSON BEGIN
+        {"status": "ok", "app": "test"}
+    END POST
+
+    # 8. Type TEXT
+    PATCH "/data-text" TEXT text/plain BEGIN
+        Patch Accepted
+    END PATCH
+
+    # ==========================
+    # DIRECTIVES ERROR POUR CATCHER LES ERREURS CI-DESSUS
+    # ==========================
+
+    # Catch 401: JS inline (syntaxe par défaut)
+    ERROR 401 BEGIN
+        context.Status(401).JSON({
+            error_code: 401,
+            message: "Accès refusé test JS inline"
+        });
+    END ERROR
+
+    # Catch 500: TEXT inline
+    ERROR 500 TEXT text/plain BEGIN
+        Internal Server Error (TEXT inline)
+    END ERROR
+
+    # Catch 503: HANDLER fichier externe JS
+    ERROR 503 HANDLER handlers/error_handler.js
+
+    # Catch 403: TEMPLATE fichier externe HTML (Template Mustache+JS)
+    ERROR 403 TEMPLATE handlers/error_401.html text/html
+
+    # Catch globale (toutes les autres erreurs) avec JSON inline
+    ERROR JSON application/json BEGIN
+        {
+            "global_error": true,
+            "message": "Erreur non gérée par un handler spécifique"
+        }
+    END ERROR
+
+END HTTP

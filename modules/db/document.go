@@ -3,7 +3,9 @@ package db
 import (
 	"encoding/json"
 	"fmt"
+	"http-server/plugins/js"
 	"reflect"
+	"strings"
 
 	"github.com/dop251/goja"
 )
@@ -88,40 +90,83 @@ func (d *Document) ToObject() map[string]interface{} {
 // ToJSObject - Créer un proxy JavaScript pour le document
 func (d *Document) ToJSObject(vm *goja.Runtime) goja.Value {
 	obj := vm.NewObject()
+	defineProperty, _ := goja.AssertFunction(vm.Get("Object").ToObject(vm).Get("defineProperty"))
 
-	// 1. Données du document
-	for key, value := range d.Data {
-		obj.Set(key, value)
+	// 1. Définition des propriétés du schéma (Getters/Setters pour synchronisation immédiate)
+	for key := range d.Model.Schema.Paths {
+		k := key
+		desc := vm.NewObject()
+		desc.Set("enumerable", true)
+		desc.Set("configurable", true)
+
+		desc.Set("get", func(call goja.FunctionCall) goja.Value {
+			return vm.ToValue(d.Get(k))
+		})
+
+		desc.Set("set", func(call goja.FunctionCall) goja.Value {
+			val := call.Argument(0)
+			d.Set(k, val.Export())
+			return goja.Undefined()
+		})
+
+		defineProperty(goja.Undefined(), obj, vm.ToValue(k), desc)
 	}
 
 	// 2. ID et meta
 	obj.Set("_id", d.ID)
 	obj.Set("id", d.ID)
 
-	// 3. Méthodes du schéma
+	// 3. Méthodes du schéma (bound au document via 'this')
 	for methodName, methodCode := range d.Model.Schema.Methods {
-		fullCode := fmt.Sprintf("(function() { return %s; })()", methodCode)
+		fullCode := js.GetFunction(methodCode)
 		if fn, err := vm.RunString(fullCode); err == nil {
 			obj.Set(methodName, fn)
+		} else {
+			e := vm.NewGoError(err)
+			obj.Set(methodName, func(call goja.FunctionCall) goja.Value {
+				vm.Interrupt(e)
+				return goja.Undefined()
+			})
 		}
+
 	}
 
-	// 4. Virtuals (Getters / Setters)
+	// 4. Virtuals (Getters / Setters) — bound au document via 'this'
 	for virtualName, virtualDef := range d.Model.Schema.Virtuals {
-		// On utilise Object.defineProperty pour les virtuals
-		defineProperty, _ := goja.AssertFunction(vm.Get("Object").ToObject(vm).Get("defineProperty"))
-
 		desc := vm.NewObject()
 		desc.Set("enumerable", true)
 		desc.Set("configurable", true)
 
 		if virtualDef.Get != "" {
-			getFn, _ := vm.RunString(fmt.Sprintf("(function() { return %s; })()", virtualDef.Get))
-			desc.Set("get", getFn)
+			getCode := strings.TrimSpace(virtualDef.Get)
+			desc.Set("get", func(call goja.FunctionCall) goja.Value {
+				fnVal, err := vm.RunString(js.GetFunction(getCode))
+				if err != nil {
+					return goja.Undefined()
+				}
+				fn, ok := goja.AssertFunction(fnVal)
+				if !ok {
+					return goja.Undefined()
+				}
+				result, _ := fn(obj)
+				return result
+			})
 		}
 		if virtualDef.Set != "" {
-			setFn, _ := vm.RunString(fmt.Sprintf("(function() { return %s; })()", virtualDef.Set))
-			desc.Set("set", setFn)
+			setCode := virtualDef.Set
+			desc.Set("set", func(call goja.FunctionCall) goja.Value {
+				fullCode := fmt.Sprintf("(function(v) { %s })", setCode)
+				fnVal, err := vm.RunString(fullCode)
+				if err != nil {
+					return goja.Undefined()
+				}
+				fn, ok := goja.AssertFunction(fnVal)
+				if !ok {
+					return goja.Undefined()
+				}
+				fn(obj, call.Argument(0))
+				return goja.Undefined()
+			})
 		}
 
 		defineProperty(goja.Undefined(), obj, vm.ToValue(virtualName), desc)
@@ -129,17 +174,11 @@ func (d *Document) ToJSObject(vm *goja.Runtime) goja.Value {
 
 	// 5. Méthodes de base (save, remove, etc.)
 	obj.Set("save", func(call goja.FunctionCall) goja.Value {
-		// Update data from proxy before saving
-		// In a real proxy we would intercept sets, but here we just sync top-level
-		for key := range d.Model.Schema.Paths {
-			d.Data[key] = obj.Get(key).Export()
-		}
-
 		err := d.Save()
 		if err != nil {
 			panic(vm.ToValue(err))
 		}
-		return vm.ToValue(obj) // Return self for chaining
+		return vm.ToValue(obj)
 	})
 
 	obj.Set("remove", func(call goja.FunctionCall) goja.Value {
@@ -156,17 +195,11 @@ func (d *Document) ToJSObject(vm *goja.Runtime) goja.Value {
 
 	obj.Set("set", func(path string, value goja.Value) goja.Value {
 		d.Set(path, value.Export())
-		obj.Set(path, value)
 		return goja.Undefined()
 	})
 
 	obj.Set("toObject", func(call goja.FunctionCall) goja.Value {
-		// Sync again
-		res := make(map[string]interface{})
-		for key := range d.Model.Schema.Paths {
-			res[key] = obj.Get(key).Export()
-		}
-		return vm.ToValue(res)
+		return vm.ToValue(d.Data)
 	})
 
 	return obj

@@ -22,7 +22,6 @@ type SchemaRecord struct {
 func (conn *Connection) Model(name string, schema ...interface{}) *Model {
 	conn.mutex.Lock()
 	defer conn.mutex.Unlock()
-
 	// Cas 1: Récupération d'un model existant (sans schéma)
 	if len(schema) == 0 {
 		if existingModel, exists := conn.models[name]; exists {
@@ -107,7 +106,6 @@ func (conn *Connection) Model(name string, schema ...interface{}) *Model {
 	model.db.Table(name).AutoMigrate(reflect.New(model.createStructType()).Interface())
 
 	conn.models[name] = model
-	conn.schemas[name] = schemaObj
 
 	return model
 }

@@ -1,0 +1,176 @@
+# Test complet: Workers, SSE, WebSocket, REWRITE/REDIRECT avec conditions JS, TEMPLATE
+# Port: 9200
+# Commande: ./http-server --bind-file examples/test_all_features.bind
+# Tests:
+#   curl http://127.0.0.1:9200/                          → JSON settings
+#   curl http://127.0.0.1:9200/env                       → ENV vars
+#   curl http://127.0.0.1:9200/old/hello                 → REWRITE → /new/hello
+#   curl http://127.0.0.1:9200/user/42/profile           → REWRITE → /api/users/42
+#   curl http://127.0.0.1:9200/legacy/page               → REDIRECT 301 → /v2/page
+#   curl http://127.0.0.1:9200/admin/dashboard           → REDIRECT 302 (si pas de X-Admin-Key)
+#   curl "http://127.0.0.1:9200/template?username=Alice" → TEMPLATE Mustache
+#   curl -N http://127.0.0.1:9200/events                 → SSE stream
+#   wscat -c ws://127.0.0.1:9200/ws                      → WebSocket echo
+#
+# NOTE: Dans les blocs <?js?> des TEMPLATE, utiliser `var` (pas const/let).
+# `var` est hissé dans la portée globale du VM goja, visible par Mustache.
+# `const`/`let` sont block-scoped et invisibles pour Mustache.
+
+DATABASE 'sqlite://test.db' [default]
+    NAME myapi
+    # user:secret
+    AUTH USER root "{SHA256}K7gNU3sdo+OL0wNhqoVWhr3g6s1xYv72ol/pe/Unols="
+
+    ADMIN DEFINE
+        PAGE "/custom" [title="Tests Custom" icon=shield order=5] BEGIN
+            <div class="card" style="padding: 15px;">
+                <h2>Page perso Administrateur</h2>
+                <?js var now = new Date().toLocaleString(); ?>
+                <p>Date sur le serveur: <b>{{&now}}</b></p>
+            </div>
+        END PAGE
+        LINK "https://github.com/hobb/http-server" [title="Repository" icon=github order=99]
+    END ADMIN
+
+    # -- Namespaces --
+    NAMESPACE global DEFINE [default auth=password]
+    END NAMESPACE
+
+    # -- Schemas --
+    SCHEMA posts DEFINE [namespace=global icon=edit color=#3B82F6]
+        FIELD title string [required]
+        FIELD body string
+    END SCHEMA
+END DATABASE
+
+HTTP 127.0.0.1:9200
+
+    # -- Configuration interne (objet `settings` en JS) --
+    SET APP_NAME "AllFeaturesTest"
+    SET API_VERSION "3.0"
+    SET MAX_CONNECTIONS 100
+
+    # -- Montage CRUD avec interface admin --
+    CRUD myapi /api
+
+    # -- Environnement process (préfixé APP_) --
+    ENV PREFIX APP_
+    ENV SET DB_HOST "localhost"
+    ENV DEFAULT LOG_LEVEL "debug"
+    ENV REMOVE OLD_TOKEN
+
+    # -- Workers en arrière-plan --
+    # config.LABEL, config.INTERVAL, config.TARGET disponibles dans script
+    WORKER workers/monitor.js [INTERVAL=2000 TARGET="http://127.0.0.1:9200/health" LABEL="HealthChecker"]
+    WORKER workers/monitor.js [INTERVAL=10000 TARGET="http://example.com" LABEL="ExternalCheck"]
+
+    # -- REWRITE (regex + groupes de capture) --
+    REWRITE "/old/(.*)" "/new/$1"
+    REWRITE "/user/([0-9]+)/profile" "/api/users/$1"
+
+    # -- REDIRECT avec condition JS (fiber.Ctx via `with(ctx)`) --
+    # Condition: méthode GET sans header X-Admin-Key → redirect vers login
+    REDIRECT 302 "/admin/(.*)" "/login?next=/admin/$1" Method() === "GET" && !Get("X-Admin-Key")
+
+    # -- REDIRECT simple (301 permanent) --
+    REDIRECT 301 "/legacy/(.*)" "/v2/$1"
+
+    # -- Global Middlewares --
+    # Named middlewares (@...) must be single-line
+    MIDDLEWARE @HELMET @CSRF @CORS[origins="*"]
+
+    # Custom JS middlewares (without @) can use blocks
+    MIDDLEWARE BEGIN
+        print("[REQ] " + context.Method() + " " + context.Path());
+    END MIDDLEWARE
+
+    # -- Routes --
+    GET "/" BEGIN
+        context.JSON({
+            app: settings.APP_NAME,
+            version: settings.API_VERSION,
+            max_connections: parseInt(settings.MAX_CONNECTIONS)
+        });
+    END GET
+
+    GET "/health" BEGIN
+        context.SendString("OK");
+    END GET
+
+    GET "/env" BEGIN
+        context.JSON({
+            db_host: process.env.APP_DB_HOST,
+            log_level: process.env.APP_LOG_LEVEL
+        });
+    END GET
+
+    GET "/new/:slug" BEGIN
+        context.JSON({ rewritten: true, slug: context.Params("slug") });
+    END GET
+
+    GET "/api/users/:id" BEGIN
+        context.JSON({ rewritten: true, userId: context.Params("id") });
+    END GET
+
+    GET "/login" BEGIN
+        context.JSON({ login: true, next: context.Query("next", "/") });
+    END GET
+
+    GET "/v2/:path" BEGIN
+        context.JSON({ upgraded: true, path: context.Params("path") });
+    END GET
+
+    # -- Template Mustache + JS (IMPORTANT: utiliser `var` pour Mustache, pas const/let) --
+    GET "/template" TEMPLATE text/html BEGIN
+        <?js
+          var username = context.Query("username", "World");
+          var api_version = settings.API_VERSION;
+          var items = ["Alpha", "Beta", "Gamma"];
+        ?>
+        <!DOCTYPE html>
+        <html>
+        <head><title>Template Test</title></head>
+        <body>
+            <h1>Hello, {{username}}!</h1>
+            <p>API Version: {{api_version}}</p>
+            <ul>
+                {{#items}}<li>{{.}}</li>{{/items}}
+            </ul>
+        </body>
+        </html>
+    END GET
+
+    # -- SSE: `const sse = require("sse")` est injecté automatiquement --
+    SSE "/events" BEGIN
+        sse.publish("hello", { message: "SSE stream started!", ts: Date.now() });
+    END SSE
+
+    SSE "/live" HANDLER examples/handlers/sse_handler.js
+
+    # -- WebSocket --
+    WS "/ws" BEGIN
+        conn.on("message", (msg) => {
+            conn.send("Echo: " + msg);
+        });
+    END WS
+
+    # -- Erreurs avec TEMPLATE --
+    ERROR 404 TEMPLATE text/html BEGIN
+        <?js var req_path = context.Path(); ?>
+        <html><body>
+            <h1>404 – Non Trouvé</h1>
+            <p>Chemin: <code>{{req_path}}</code></p>
+        </body></html>
+    END ERROR
+
+    ERROR 500 BEGIN
+        context.Status(500).JSON({
+            error: true,
+            message: "Internal Server Error",
+            path: context.Path()
+        });
+    END ERROR
+
+    STATIC /public "./public"
+
+END HTTP

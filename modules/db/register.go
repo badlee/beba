@@ -2,42 +2,17 @@ package db
 
 import (
 	"fmt"
+	"http-server/plugins/js"
 
 	"github.com/dop251/goja"
 	"gorm.io/gorm"
 )
 
-func RegisterMongoose(vm *goja.Runtime, db *gorm.DB) goja.Value {
-	conn := &Connection{
-		db:      db,
-		vm:      vm,
-		models:  make(map[string]*Model),
-		schemas: make(map[string]*Schema),
-	}
-
-	// Auto-migrate la table de schémas
-	db.AutoMigrate(&SchemaRecord{})
-
-	// Constructeur Schema
-	schemaCtor := func(paths map[string]interface{}) goja.Value {
-		schema := conn.createSchemaFromMap(paths)
-		schema.vm = vm
-
-		return createSchemaProxy(vm, schema)
-	}
-
-	dbObj := vm.NewObject()
-	dbObj.Set("Schema", schemaCtor)
-	dbObj.Set("Model", func(name string, schema goja.Value) goja.Value {
-		model := conn.Model(name, schema)
-		return createModelProxy(vm, model)
-	})
-	dbObj.Set("model", func(name string, schema goja.Value) goja.Value {
-		model := conn.Model(name, schema)
-		return createModelProxy(vm, model)
-	})
-
-	return dbObj
+func RegisterMongoose(vm *goja.Runtime, db *gorm.DB, name ...string) goja.Value {
+	var conn *Connection
+	conn = NewConnection(db, name...)
+	conn.vm = vm
+	return conn.ToJSObject(vm)
 }
 
 func createSchemaProxy(vm *goja.Runtime, s *Schema) goja.Value {
@@ -89,10 +64,41 @@ func createSchemaProxy(vm *goja.Runtime, s *Schema) goja.Value {
 	return obj
 }
 
-func createModelProxy(vm *goja.Runtime, model *Model) goja.Value {
+func (conn *Connection) ToJSObject(vm *goja.Runtime) goja.Value {
+	// Auto-migrate la table de schémas
+	conn.db.AutoMigrate(&SchemaRecord{})
+
+	// Constructeur Schema
+	schemaCtor := func(paths map[string]interface{}) goja.Value {
+		schema := conn.createSchemaFromMap(paths)
+		schema.vm = vm
+
+		return createSchemaProxy(vm, schema)
+	}
+	model := func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) == 0 {
+			vm.Interrupt(vm.NewGoError(fmt.Errorf("model requires at least a name")))
+			return goja.Undefined()
+		}
+		name := call.Argument(0).String()
+		var schema []any
+		if len(call.Arguments) > 1 {
+			schema = append(schema, call.Argument(1))
+		}
+		model := conn.Model(name, schema...)
+		return conn.createModelProxy(vm, model)
+	}
+	dbObj := vm.NewObject()
+	dbObj.Set("Schema", schemaCtor)
+	dbObj.Set("Model", model)
+	dbObj.Set("model", model)
+	return dbObj
+}
+func (conn *Connection) createModelProxy(vm *goja.Runtime, model *Model) goja.Value {
 	if model == nil {
 		return goja.Undefined()
 	}
+
 	obj := vm.NewObject()
 
 	// Méthode schema (comme mongoose.Schema)
@@ -131,7 +137,8 @@ func createModelProxy(vm *goja.Runtime, model *Model) goja.Value {
 		if filter != nil {
 			q.Filter(filter)
 		}
-		return q.ToJSObject()
+		q.Limit(1)
+		return q.ToJSObject(true)
 	})
 
 	obj.Set("find", func(filter map[string]any) goja.Value {
@@ -142,11 +149,52 @@ func createModelProxy(vm *goja.Runtime, model *Model) goja.Value {
 		return q.ToJSObject()
 	})
 
+	// Static save/remove delegation
+	obj.Set("save", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) == 0 {
+			return goja.Undefined()
+		}
+		docObj := call.Argument(0).ToObject(vm)
+		if saveFn, ok := goja.AssertFunction(docObj.Get("save")); ok {
+			res, _ := saveFn(docObj)
+			return res
+		}
+		return goja.Undefined()
+	})
+
+	obj.Set("remove", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) == 0 {
+			return goja.Undefined()
+		}
+		docObj := call.Argument(0).ToObject(vm)
+		if removeFn, ok := goja.AssertFunction(docObj.Get("remove")); ok {
+			res, _ := removeFn(docObj)
+			return res
+		}
+		return goja.Undefined()
+	})
+
 	// Ajouter les fonctions statiques
 	for funcName, funcCode := range model.Schema.Statics {
-		fullCode := fmt.Sprintf("(%s)", funcCode)
+		fullCode := js.GetFunction(funcCode)
+
 		if fn, err := vm.RunString(fullCode); err == nil {
-			obj.Set(funcName, fn)
+			obj.Set(funcName, func(call goja.FunctionCall) goja.Value {
+				// Convert goja.Value to goja.Callable
+				function, _ := goja.AssertFunction(fn)
+				ret, e := function(obj, call.Arguments...)
+				if e != nil {
+					vm.Interrupt(e)
+					return goja.Undefined()
+				}
+				return ret
+			})
+		} else {
+			e := vm.NewGoError(err)
+			obj.Set(funcName, func(call goja.FunctionCall) goja.Value {
+				vm.Interrupt(e)
+				return goja.Undefined()
+			})
 		}
 	}
 

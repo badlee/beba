@@ -1,0 +1,38 @@
+# Test: Protocol Multiplexing (HTTP + DTP sur le même port 127.0.0.1:8384)
+# Deux protocoles partagent le même listener TCP.
+# HTTP répond aux requêtes HTTP standard.
+# DTP répond aux connexions dont le premier octet est 0x44 ('D').
+# 
+# Commandes de test:
+#   curl http://127.0.0.1:8384/             → "HTTP: OK on port 8384"
+#   curl http://127.0.0.1:8384/info         → JSON {protocol, port, ok}
+#   curl http://127.0.0.1:8384/template-test → HTML Mustache
+#   echo "D Hello" | nc 127.0.0.1 8384     → DTP handler (si implémenté)
+
+REGISTER PROTOCOL DTP "examples/test_proto.js"
+
+TCP 127.0.0.1:8384
+    HTTP
+        GET "/" BEGIN
+            context.SendString("HTTP: OK on port 8384");
+        END GET
+
+        GET "/info" BEGIN
+            context.JSON({ protocol: "HTTP", port: 8384, ok: true });
+        END GET
+
+        # Test TEMPLATE: les variables doivent être déclarées avec `var`
+        # pour être visibles par le moteur Mustache (portée globale JS)
+        GET "/template-test" TEMPLATE text/html BEGIN
+            <?js
+              var user = "Monde";
+              var port = 8384;
+            ?>
+            <h1>Bonjour, {{user}} !</h1>
+            <p>Le port est {{port}}.</p>
+        END GET
+    END HTTP
+
+    DTP
+    END DTP
+END TCP

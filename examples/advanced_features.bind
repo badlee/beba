@@ -1,0 +1,38 @@
+HTTP 127.0.0.1:8286
+    ENV PREFIX APP_
+    ENV .env.test
+    SET GLOBAL_SET "SetValue"
+
+    # Syntaxe canonique: REDIRECT [code] pattern sub [js_cond]
+    REDIRECT 301 "/old" "/new"
+
+    # REWRITE simple
+    REWRITE "/internal" "/hello"
+
+    PROXY /google https://www.google.com
+
+    GET "/hello" BEGIN
+        print("Hello from /hello");
+    END GET
+
+    GET "/new" BEGIN
+        print("Redirected to /new");
+    END GET
+
+    GET "/js-test" HANDLER "test_handler.js"
+
+    GET "/binary" BINARY text/plain BEGIN
+        48656c6c6f2042696e617279
+    END GET
+
+    # ERROR inline – type explicite
+    ERROR 404 TEMPLATE text/html  BEGIN
+        <h1>Custom 404: Not Found</h1>
+    END ERROR
+
+    # ERROR inline – JS par défaut (sans type)
+    ERROR 500  BEGIN
+        context.Status(500).JSON({ error: true, code: 500 });
+    END ERROR
+
+END HTTP

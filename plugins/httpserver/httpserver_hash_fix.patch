@@ -1,0 +1,14 @@
+--- plugins/httpserver/httpserver.go
++++ plugins/httpserver/httpserver.go
+@@ -172,12 +172,9 @@
+ 	// Cookies
+ 	secret := cfg.Secret
+ 	if secret == "" {
+- // remove user's broken hash code
+-hash := sha256.Sum256([]byte(cfg.AppName))
+-secret = hex.EncodeToString(hash[:])[:32]
++h := sha256.Sum256([]byte(cfg.AppName))
++secret = hex.EncodeToString(h[:])[:32]
+ cfg.Secret = secret
+ }
+ app.Use(encryptcookie.New(encryptcookie.Config{

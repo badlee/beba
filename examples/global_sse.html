@@ -13,15 +13,18 @@
         const sse = require("sse");
         const storage = require("storage");
 
-        // Every time this page is hit, broadcast a notification
+        // Broadcast a notification to the 'global' channel via the new high-performance Sharded Hub
         sse.publish("notification", "Someone visited the global page at " + new Date().toLocaleTimeString());
 
         // Also increment a global counter
+        if (storage.shared.num.undefined("visits")) {
+            storage.shared.num.define("visits", 0);
+        }
         storage.shared.num.incr("visits", 1);
         var totalVisits = storage.shared.num.get("visits");
     </script>
 
-    <p>Total page visits: {{totalVisits}}</p>
+    <p>Total page visits: <span visits>{{totalVisits}}</span></p>
 
     <script>
         const evtSource = new EventSource("/events");

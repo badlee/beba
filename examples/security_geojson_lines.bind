@@ -1,0 +1,23 @@
+SECURITY geojson_lines
+    # 1. LineString - a specific corridor or border line
+    GEOJSON boundary_line BEGIN
+        {
+            "type": "LineString",
+            "coordinates": [[2, 48], [3, 49]]
+        }
+    END POINT
+
+    # 2. MultiLineString - non-contiguous border segments
+    GEOJSON split_boundaries BEGIN
+        {
+            "type": "MultiLineString",
+            "coordinates": [
+                [[2.1, 48.1], [2.2, 48.2]],
+                [[2.3, 48.3], [2.4, 48.4]]
+            ]
+        }
+    END POINT
+
+    # This is typically used for exclusion (e.g. "don't accept if on this line")
+    CONNECTION DENY boundary_line
+END SECURITY

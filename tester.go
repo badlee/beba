@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"http-server/modules/sse"
+	"http-server/plugins/config"
 	"http-server/processor"
 	"os"
 	"regexp"
@@ -87,10 +87,10 @@ func (m *mockCtx) Method(args ...string) string {
 	return "GET"
 }
 
-func runTemplateTest(filePath string, findSelector string, matchExpr string, testStdout string, testStderr string) error {
+func runTemplateTest(filePath string, cfg *config.AppConfig) error {
 	// 1. Redirect Logs
-	stdoutFile, _ := os.Create(testStdout)
-	stderrFile, _ := os.Create(testStderr)
+	stdoutFile, _ := os.Create(cfg.Stdout)
+	stderrFile, _ := os.Create(cfg.Stderr)
 	defer stdoutFile.Close()
 	defer stderrFile.Close()
 
@@ -107,12 +107,11 @@ func runTemplateTest(filePath string, findSelector string, matchExpr string, tes
 	// Let's just redirect.
 
 	// 2. Render Template
-	sseManager := sse.NewManager()
 	ctx := &mockCtx{
 		locals: make(map[string]interface{}),
 	}
 
-	rendered, err := processor.ProcessFile(filePath, ctx, sseManager)
+	rendered, err := processor.ProcessFile(filePath, ctx, cfg)
 	if err != nil {
 		return fmt.Errorf("Render Error: %v", err)
 	}
@@ -124,29 +123,29 @@ func runTemplateTest(filePath string, findSelector string, matchExpr string, tes
 	}
 
 	var targets *goquery.Selection
-	if findSelector != "" {
-		targets = doc.Find(findSelector)
+	if cfg.Find != "" {
+		targets = doc.Find(cfg.Find)
 	} else {
 		// If no find selector, treat the whole body or doc as target?
 		targets = doc.Selection
 	}
 
-	if targets.Length() == 0 && findSelector != "" {
-		return fmt.Errorf("No elements found matching: %s", findSelector)
+	if targets.Length() == 0 && cfg.Find != "" {
+		return fmt.Errorf("No elements found matching: %s", cfg.Find)
 	}
 
 	// 4. Match validation
-	originalExpr := matchExpr
-	if matchExpr != "" {
+	originalExpr := cfg.Match
+	if cfg.Match != "" {
 		valid := false
 
 		// Try RegExp first
-		if strings.HasPrefix(matchExpr, "/") {
-			lastSlash := strings.LastIndex(matchExpr, "/")
+		if strings.HasPrefix(cfg.Match, "/") {
+			lastSlash := strings.LastIndex(cfg.Match, "/")
 			if lastSlash > 0 {
-				reStr := matchExpr[1:lastSlash]
-				flags := regexp.MustCompile("[^imsug]").ReplaceAllString(strings.ToLower(matchExpr[lastSlash+1:]), "")
-				matchExpr = fmt.Sprintf("(/%s/%s).test(text)", strings.TrimSpace(reStr), strings.TrimSpace(flags))
+				reStr := cfg.Match[1:lastSlash]
+				flags := regexp.MustCompile("[^imsug]").ReplaceAllString(strings.ToLower(cfg.Match[lastSlash+1:]), "")
+				cfg.Match = fmt.Sprintf("(/%s/%s).test(text)", strings.TrimSpace(reStr), strings.TrimSpace(flags))
 
 				// // Map JS flags to Go flags
 				// // i (case-insensitive), g (global - ignored in match), m (multiline), s (dotall), u (unicode)
@@ -186,9 +185,10 @@ func runTemplateTest(filePath string, findSelector string, matchExpr string, tes
 		}
 		// Try JS expression
 		vm := goja.New()
+
 		targets.Each(func(i int, s *goquery.Selection) {
-			stdout, _ := os.ReadFile(testStdout)
-			stderr, _ := os.ReadFile(testStderr)
+			stdout, _ := os.ReadFile(cfg.Stdout)
+			stderr, _ := os.ReadFile(cfg.Stderr)
 
 			html, _ := s.Html()
 			vm.Set("text", s.Text())
@@ -196,7 +196,7 @@ func runTemplateTest(filePath string, findSelector string, matchExpr string, tes
 			vm.Set("stdout", string(stdout))
 			vm.Set("stderr", string(stderr))
 
-			code := fmt.Sprintf("(%s);", matchExpr)
+			code := fmt.Sprintf("(%s);", cfg.Match)
 			res, err := vm.RunString(code)
 			if err == nil {
 				if res.ToBoolean() {

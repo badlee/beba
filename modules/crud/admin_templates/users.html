@@ -1,0 +1,100 @@
+<div class="d-flex align-items-center justify-content-between mb-4">
+  <h2 class="h4 mb-0 fw-bold">Users</h2>
+  <button class="btn btn-primary shadow-sm" data-bs-toggle="modal" data-bs-target="#newUserModal">
+    <i class="bi bi-person-plus me-2"></i> New User
+  </button>
+</div>
+
+<div class="card border-0 shadow-sm overflow-hidden">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead class="bg-light-subtle">
+        <tr>
+          <th class="ps-4">Username</th>
+          <th>Email</th>
+          <th class="text-center">Status</th>
+          <th>Created</th>
+          <th class="text-end pe-4" style="width: 100px;">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        <?js var parsedUsers = JSON.parse(settings.users || '[]') || []; ?>
+        {{#parsedUsers}}
+        <tr>
+          <td class="ps-4 fw-medium text-main">
+            <div class="d-flex align-items-center gap-2">
+              <div class="rounded-circle bg-light d-flex align-items-center justify-content-center border" style="width: 32px; height: 32px; font-size: 12px; font-weight: 600;">
+                {{username.substring(0,1).toUpperCase()}}
+              </div>
+              {{username}}
+            </div>
+          </td>
+          <td><span class="text-muted small">{{email}}</span></td>
+          <td class="text-center">
+            {{#is_active}}
+            <span class="badge rounded-pill bg-success-subtle text-success border border-success-subtle px-3 py-1">Active</span>
+            {{/is_active}}
+            {{^is_active}}
+            <span class="badge rounded-pill bg-danger-subtle text-danger border border-danger-subtle px-3 py-1">Inactive</span>
+            {{/is_active}}
+          </td>
+          <td><small class="text-muted">{{created_at}}</small></td>
+          <td class="text-end pe-4">
+            <button class="btn btn-sm btn-outline-danger border-0"
+              hx-delete="{{apiPrefix}}/users/{{id}}"
+              hx-target="closest tr" hx-swap="outerHTML"
+              hx-confirm="Are you sure you want to delete this user?">
+              <i class="bi bi-trash"></i>
+            </button>
+          </td>
+        </tr>
+        {{/parsedUsers}}
+        {{^parsedUsers}}
+        <tr>
+          <td colspan="5" class="text-center py-5 text-muted">
+            <i class="bi bi-people fs-1 opacity-25"></i>
+            <p class="mt-2">No users found.</p>
+          </td>
+        </tr>
+        {{/parsedUsers}}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- New User Modal -->
+<div class="modal fade" id="newUserModal" tabindex="-1" aria-labelledby="newUserModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content border-0 shadow-lg">
+      <div class="modal-header border-0">
+        <h5 class="modal-title fw-bold" id="newUserModalLabel">Add New User</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <form hx-post="{{apiPrefix}}/users" hx-on::after-request="if(event.detail.successful){htmx.ajax('GET', '{{adminPrefix}}/users', {target:'#main-content', pushUrl:false})}">
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label small fw-bold text-muted">Username</label>
+            <input name="username" class="form-control" placeholder="e.g. johndoe" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label small fw-bold text-muted">Email Address</label>
+            <input type="email" name="email" class="form-control" placeholder="e.g. john@example.com" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label small fw-bold text-muted">Password</label>
+            <input type="password" name="password_hash" class="form-control" placeholder="••••••••" required>
+            <div class="form-text tiny">Will be securely hashed before storage.</div>
+          </div>
+          <div class="form-check form-switch mt-4">
+            <input class="form-check-input" type="checkbox" name="is_active" id="userIsActive" checked>
+            <label class="form-check-label small fw-bold text-muted" for="userIsActive">Active Account</label>
+          </div>
+        </div>
+        <div class="modal-footer border-0">
+          <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary px-4 fw-bold">Create User</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>

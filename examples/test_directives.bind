@@ -1,0 +1,37 @@
+# Test: WORKER directive avec config et settings
+# Vérifie que:
+# 1. WORKER lance un script JS en arrière-plan
+# 2. Les config KEY=VALUE sont disponibles via `config`
+# 3. Les SET KEY=VALUE sont disponibles via `settings`
+# 4. ENV SET/DEFAULT/REMOVE fonctionnent correctement
+
+HTTP 127.0.0.1:9001
+    # -- Configuration interne (settings) --
+    SET APP_NAME "TestServer"
+    SET API_VERSION "3.0"
+
+    # -- Gestion de l'environnement process --
+    ENV PREFIX APP_
+    ENV SET DB_HOST "localhost"
+    ENV DEFAULT LOG_LEVEL "debug"
+    ENV REMOVE OLD_SECRET
+
+    # -- Worker en arrière-plan --
+    WORKER test_worker.js INTERVAL=1000 TARGET="http://example.com"
+
+    # -- Routes de vérification --
+    GET "/settings" BEGIN
+        context.JSON({
+            app_name: settings.APP_NAME,
+            api_version: settings.API_VERSION
+        });
+    END GET
+
+    GET "/env" BEGIN
+        context.JSON({
+            db_host: process.env.APP_DB_HOST,
+            log_level: process.env.APP_LOG_LEVEL
+        });
+    END GET
+
+END HTTP

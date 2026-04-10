@@ -1,0 +1,25 @@
+SECURITY geojson_enforcement
+    # Inline GeoJSON for a FeatureCollection in Paris
+    GEOJSON zone_a BEGIN
+        {
+            "type": "FeatureCollection",
+            "features": [
+                {"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [[[2,48],[3,48],[3,49],[2,49],[2,48]]]}},
+                {"type": "Feature", "geometry": {"type": "Point", "coordinates": [2.5, 48.5]}}
+            ]
+        }
+    END POINT
+    
+    # File-based GeoJSON
+    GEOJSON zone_b "custom_zone.geojson"
+    
+    # Deny Zone A explicitly
+    CONNECTION DENY zone_a
+END SECURITY
+
+HTTP 127.0.0.1:0
+    SECURITY geojson_enforcement
+    GET "/" BEGIN
+        context.SendString("geojson_ok");
+    END GET
+END HTTP

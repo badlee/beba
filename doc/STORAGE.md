@@ -1,6 +1,6 @@
 # Session and Cache Module
 
-The `session` module provides persistent and volatile storage capabilities for server-side JavaScript scripts. It is powered by an embedded [SurrealDB](https://surrealdb.com) instance.
+The `session` module provides persistent and volatile storage capabilities for server-side JavaScript scripts.
 
 ## Storage Types
 
