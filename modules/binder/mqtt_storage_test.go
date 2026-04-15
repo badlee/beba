@@ -29,12 +29,20 @@ func TestMQTTDirective_Storage(t *testing.T) {
 			t.Fatalf("failed to parse config: %v", err)
 		}
 		
+		listeners, err := dir.Start()
+		if err != nil {
+			t.Fatalf("failed to start directive: %v", err)
+		}
+		
 		if dir.server.Server() == nil {
 			t.Fatal("expected server to be initialized")
 		}
 		
 		// Close to cleanup
-		dir.server.Close()
+		dir.Close()
+		for _, l := range listeners {
+			l.Close()
+		}
 	})
 
 	t.Run("With STORAGE directive", func(t *testing.T) {
@@ -54,12 +62,20 @@ func TestMQTTDirective_Storage(t *testing.T) {
 			t.Fatalf("failed to parse config: %v", err)
 		}
 		
+		listeners, err := dir.Start()
+		if err != nil {
+			t.Fatalf("failed to start directive: %v", err)
+		}
+		
 		// Ensure it initialized
 		if dir.server.Server() == nil {
 			t.Fatal("expected server to be initialized")
 		}
 		
 		// Close to cleanup
-		dir.server.Close()
+		dir.Close()
+		for _, l := range listeners {
+			l.Close()
+		}
 	})
 }

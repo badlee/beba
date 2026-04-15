@@ -238,6 +238,7 @@ type CrudDirective struct {
 	cfg  *CrudDirectiveConfig
 	inst *CrudInstance
 	db   *gorm.DB
+	conn *dbpkg.Connection
 }
 
 func NewCrudDirective(cfg *CrudDirectiveConfig) (*CrudDirective, error) {
@@ -249,6 +250,9 @@ func (d *CrudDirective) Address() string                 { return d.cfg.Address 
 func (d *CrudDirective) Match(peek []byte) (bool, error) { return false, nil }
 func (d *CrudDirective) Handle(conn net.Conn) error      { return nil }
 func (d *CrudDirective) Close() error {
+	if d.conn != nil {
+		return d.conn.Close()
+	}
 	if d.db != nil {
 		sqlDB, err := d.db.DB()
 		if err == nil {
@@ -411,6 +415,7 @@ func (d *CrudDirective) Start() ([]net.Listener, error) {
 
 	// Regiser connection globally so other protocols (like MQTT STORAGE) can find it
 	conn := dbpkg.NewConnection(gormDB, cfg.Name)
+	d.conn = conn
 	if cfg.IsDefault {
 		dbpkg.RegisterDefaultConnection(conn)
 	}

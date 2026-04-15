@@ -24,6 +24,7 @@ type DatabaseDirective struct {
 	config    *DirectiveConfig
 	databases []string
 	crud      *CrudProtocol
+	conn      *db.Connection
 }
 
 // CrudProtocol is a wrapper around crud.CrudDirective to override its name.
@@ -69,8 +70,10 @@ func NewDatabaseDirective(c *DirectiveConfig) (Directive, error) {
 		if err != nil {
 			return nil, fmt.Errorf("DATABASE (CRUD) DSL parse error: %w", err)
 		}
-		// Force JS name to "database"
-		cfg.Name = "database"
+		// Force JS name to "database" if not already set by NAME directive
+		if cfg.Name == "" {
+			cfg.Name = "database"
+		}
 
 		inner, err := crud.NewCrudDirective(cfg)
 		if err != nil {
@@ -102,15 +105,25 @@ func (d *DatabaseDirective) HandlePacket(data []byte, addr net.Addr, pc net.Pack
 
 // Close closes any active global hooks.
 func (d *DatabaseDirective) Close() error {
+	var errs []error
 	if d.crud != nil {
-		return d.crud.Close()
+		if err := d.crud.Close(); err != nil {
+			errs = append(errs, err)
+		}
 	}
-	// // Deregister global object on stop
-	// for _, db := range d.databases {
-	// 	processor.UnregisterGlobal(db)
-	// }
+
+	if d.conn != nil {
+		if err := d.conn.Close(); err != nil {
+			errs = append(errs, err)
+		}
+		d.conn = nil
+	}
+
 	processor.UnregisterGlobal("database")
 
+	if len(errs) > 0 {
+		return fmt.Errorf("DATABASE: Errors during close: %v", errs)
+	}
 	return nil
 }
 
@@ -143,6 +156,7 @@ func (d *DatabaseDirective) Start() ([]net.Listener, error) {
 	}
 
 	conn := db.NewConnection(gormDB, query.Get("name"))
+	d.conn = conn
 	if !query.Has("default") || isTrue(query.Get("default")) {
 		db.RegisterDefaultConnection(conn)
 	}

@@ -40,6 +40,13 @@ func TestMQTTDirective_SecurityIntegration(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to parse config: %v", err)
 		}
+		listeners, err := dir.Start()
+		if err != nil {
+			t.Fatalf("failed to start: %v", err)
+		}
+		for _, listener := range listeners {
+			defer listener.Close()
+		}
 		if dir.server == nil {
 			t.Fatal("Expected MQTT server creation to succeed even with security")
 		}

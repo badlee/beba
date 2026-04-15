@@ -1,6 +1,6 @@
 SECURITY complex_geojson
     # FeatureCollection with multiple shapes (Paris-like areas)
-    GEOJSON complex_area "complex_zone.geojson"
+    GEOJSON complex_area "../../examples/complex_zone.geojson"
     
     # Deny the complex area
     CONNECTION DENY complex_area

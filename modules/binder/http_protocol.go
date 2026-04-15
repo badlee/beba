@@ -516,6 +516,21 @@ func NewHTTPDirective(config *DirectiveConfig) *HTTPDirective {
 					}
 				case "UNSECURE":
 					useWAF = false
+				case "PAYMENT":
+					paymentName := mw.Args.Get("name", "")
+					price := mw.Args.Get("price", "")
+					desc := mw.Args.Get("desc", "")
+					ref := mw.Args.Get("ref", "")
+					scheme := mw.Args.Get("scheme", "")
+					ttlStr := mw.Args.Get("ttl", "")
+					handlers = append(handlers, paymentGateMiddleware(paymentGateConfig{
+						Name:        paymentName,
+						Price:       price,
+						Description: desc,
+						Ref:         ref,
+						Scheme:      scheme,
+						TTLOverride: ttlStr,
+					}))
 				}
 			}
 
@@ -801,6 +816,56 @@ func NewHTTPDirective(config *DirectiveConfig) *HTTPDirective {
 		}
 		if err := crud.MountOn(app, inst, crudMount); err != nil {
 			log.Printf("HTTP: CRUD %q mount error: %v", crudName, err)
+		}
+	}
+
+	// ── PAYMENT mounts ──────────────────────────────────────────────────────
+	// PAYMENT [name] [/mount/path]
+	// Attaches a named PaymentConnection to this HTTP server at the given prefix.
+	var paymentMountRoutes []*RouteConfig = config.GetRoutes("PAYMENT")
+	mountedPaymentNames := make(map[string]bool)
+	for _, r := range paymentMountRoutes {
+		paymentName := r.Path                        // first token = payment connection name
+		paymentMount := strings.TrimSpace(r.Handler) // second token = mount path
+		if paymentMount == "" {
+			paymentMount = "/" + paymentName
+		}
+		conn := GetPaymentConnection(paymentName)
+		if conn == nil {
+			log.Printf("HTTP: PAYMENT %q not found, skipping mount on %s", paymentName, paymentMount)
+			continue
+		}
+		MountPaymentRoutes(app, conn, paymentMount)
+		mountedPaymentNames[paymentName] = true
+	}
+
+	// ── Auto-mount payment routes ───────────────────────────────────────────
+	// If @payment[name="X"] is used in routes but no PAYMENT X /prefix exists,
+	// auto-mount on /_pay/hook/{name}
+	var collectPaymentMiddlewareNames func(routes []*RouteConfig, names map[string]bool)
+	collectPaymentMiddlewareNames = func(routes []*RouteConfig, names map[string]bool) {
+		for _, r := range routes {
+			for _, mw := range r.Middlewares {
+				if strings.ToUpper(mw.Name) == "PAYMENT" {
+					if n := mw.Args.Get("name", ""); n != "" {
+						names[n] = true
+					}
+				}
+			}
+			if r.IsGroup && len(r.Routes) > 0 {
+				collectPaymentMiddlewareNames(r.Routes, names)
+			}
+		}
+	}
+	usedPaymentNames := make(map[string]bool)
+	collectPaymentMiddlewareNames(config.Routes, usedPaymentNames)
+	for name := range usedPaymentNames {
+		if !mountedPaymentNames[name] {
+			conn := GetPaymentConnection(name)
+			if conn != nil {
+				prefix := "/_pay/hook/" + name
+				MountPaymentRoutes(app, conn, prefix)
+			}
 		}
 	}
 

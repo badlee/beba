@@ -56,14 +56,14 @@ type mockProvider struct {
 	refundErr      error
 	checkoutResult PaymentResult
 	checkoutErr    error
-	ussdResult     PaymentResult
-	ussdErr        error
+	pushResult     PaymentResult
+	pushErr        error
 
 	lastChargeReq   PaymentRequest
 	lastVerifyID    string
 	lastRefundReq   PaymentRequest
 	lastCheckoutReq PaymentRequest
-	lastUSSDReq     PaymentRequest
+	lastPushReq     PaymentRequest
 }
 
 func (m *mockProvider) Charge(req PaymentRequest) (PaymentResult, error) {
@@ -82,9 +82,9 @@ func (m *mockProvider) Checkout(req PaymentRequest) (PaymentResult, error) {
 	m.lastCheckoutReq = req
 	return m.checkoutResult, m.checkoutErr
 }
-func (m *mockProvider) USSD(req PaymentRequest) (PaymentResult, error) {
-	m.lastUSSDReq = req
-	return m.ussdResult, m.ussdErr
+func (m *mockProvider) Push(req PaymentRequest) (PaymentResult, error) {
+	m.lastPushReq = req
+	return m.pushResult, m.pushErr
 }
 
 // freshPaymentConn builds a minimal PaymentConnection wired to a mockProvider.
@@ -628,20 +628,35 @@ func TestPaymentConnection_Checkout(t *testing.T) {
 	}
 }
 
-func TestPaymentConnection_USSD(t *testing.T) {
+func TestPaymentConnection_Push(t *testing.T) {
 	mock := &mockProvider{
-		ussdResult: PaymentResult{ID: "req_abc", Status: "pending"},
+		pushResult: PaymentResult{ID: "req_abc", Status: "pending"},
 	}
 	conn := freshPaymentConn("test", mock)
-	result, err := conn.USSD(PaymentRequest{Phone: "237612345678", Amount: 1000})
+	result, err := conn.Push(PaymentRequest{Phone: "237612345678", Amount: 1000})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result.Status != "pending" {
 		t.Errorf("expected status=pending, got %s", result.Status)
 	}
-	if mock.lastUSSDReq.Phone != "237612345678" {
-		t.Errorf("expected phone=237612345678, got %s", mock.lastUSSDReq.Phone)
+	if mock.lastPushReq.Phone != "237612345678" {
+		t.Errorf("expected phone=237612345678, got %s", mock.lastPushReq.Phone)
+	}
+}
+
+// TestPaymentConnection_USSD_BackwardCompat verifies that USSD is an alias for Push.
+func TestPaymentConnection_USSD_BackwardCompat(t *testing.T) {
+	mock := &mockProvider{
+		pushResult: PaymentResult{ID: "req_bc", Status: "pending"},
+	}
+	conn := freshPaymentConn("test", mock)
+	result, err := conn.USSD(PaymentRequest{Phone: "237600000000", Amount: 500})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ID != "req_bc" {
+		t.Errorf("expected id=req_bc via USSD alias, got %s", result.ID)
 	}
 }
 

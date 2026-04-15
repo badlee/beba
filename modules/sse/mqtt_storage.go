@@ -234,6 +234,7 @@ func (h *MochiDBHook) OnUnsubscribed(cl *mqtt.Client, pk packets.Packet) {
 }
 
 // OnRetainMessage adds a retained message for a topic to the store.
+// OnRetainMessage adds a retained message for a topic to the store.
 func (h *MochiDBHook) OnRetainMessage(cl *mqtt.Client, pk packets.Packet, r int64) {
 	if h.db == nil {
 		h.Log.Error("", "error", storage.ErrDBFileNotOpen)
@@ -272,8 +273,6 @@ func (h *MochiDBHook) OnRetainMessage(cl *mqtt.Client, pk packets.Packet, r int6
 		err = h.db.Save(&MQTTRetained{ID: in.ID, Data: data}).Error
 		if err != nil {
 			h.Log.Error("failed to save retained message", "topic", pk.TopicName, "error", err)
-		} else {
-			h.Log.Info("saved retained message", "topic", pk.TopicName)
 		}
 	}
 }
@@ -416,14 +415,13 @@ func (h *MochiDBHook) StoredSubscriptions() (v []storage.Subscription, err error
 
 // StoredRetainedMessages returns all stored retained messages from the store.
 func (h *MochiDBHook) StoredRetainedMessages() (v []storage.Message, err error) {
-	h.Log.Info("StoredRetainedMessages checking for data...")
 	if h.db == nil {
 		h.Log.Error("", "error", storage.ErrDBFileNotOpen)
 		return
 	}
 
 	var records []MQTTRetained
-	query := storage.RetainedKey+"_%"
+	query := storage.RetainedKey + "_%"
 	if err := h.db.Where("id LIKE ?", query).Find(&records).Error; err != nil {
 		h.Log.Error("failed to query retained messages", "query", query, "error", err)
 		return nil, err
@@ -437,7 +435,6 @@ func (h *MochiDBHook) StoredRetainedMessages() (v []storage.Message, err error) 
 			h.Log.Error("failed to unmarshal retained message", "id", rec.ID, "error", err)
 		}
 	}
-	h.Log.Info("StoredRetainedMessages completed", "found", len(records), "valid", len(v))
 	return
 }
 

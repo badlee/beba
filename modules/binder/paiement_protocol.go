@@ -2,6 +2,9 @@ package binder
 
 // payment_protocol.go — PAYMENT directive for integrating payment providers.
 //
+// Supported providers: Stripe, Flutterwave, CinetPay, MTN, Orange, Airtel,
+// x402/crypto (via facilitator), and custom.
+//
 // ─────────────────────────────────────────────────────────────────────────────
 // DSL
 // ─────────────────────────────────────────────────────────────────────────────
@@ -91,18 +94,18 @@ package binder
 //           END RESPONSE
 //       END CHECKOUT
 //
-//       USSD DEFINE
-//           ENDPOINT "https://api.mypay.com/v1/ussd"
+//       PUSH DEFINE                        // (alias: USSD DEFINE)
+//           ENDPOINT "https://api.mypay.com/v1/push"
 //           METHOD POST
 //           BODY BEGIN
 //               append("phone",  payment.phone)
 //               append("amount", payment.amount)
 //           END BODY
 //           RESPONSE BEGIN
-//               if (response.status !== 202) reject("USSD push failed")
+//               if (response.status !== 202) reject("Push failed")
 //               resolve({ id: response.body.requestId, status: "pending" })
 //           END RESPONSE
-//       END USSD
+//       END PUSH
 //
 //       WEBHOOK @PRE  /payment/mypay/webhook BEGIN [secret=s]
 //           if (!verify(request.body, request.headers["x-sig"], args.secret)) reject("bad sig")
@@ -141,8 +144,9 @@ package binder
 //   const checkout = await pay.checkout({ amount: 5000, orderId: "ORD-002" })
 //   // checkout.redirectUrl → rediriger le client
 //
-//   // USSD push
-//   const push = await pay.ussd({ phone: "237612345678", amount: 1000, orderId: "ORD-003" })
+//   // Push payment (push message, USSD, email, SMS)
+//   const push = await pay.push({ phone: "237612345678", amount: 1000, orderId: "ORD-003" })
+//   // Backward compat: pay.ussd() is an alias for pay.push()
 //
 //   // Gestion des connexions
 //   pay.connection("stripe")
@@ -155,6 +159,7 @@ package binder
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -165,14 +170,18 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
+	dbpkg "http-server/modules/db"
 	"http-server/modules"
 	"http-server/plugins/httpserver"
 	"http-server/processor"
 
 	"github.com/dop251/goja"
 	"github.com/gofiber/fiber/v3"
+	"gorm.io/gorm"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -208,7 +217,7 @@ type PaymentResult struct {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// paymentOp — one operation block (CHARGE / VERIFY / REFUND / CHECKOUT / USSD)
+// paymentOp — one operation block (CHARGE / VERIFY / REFUND / CHECKOUT / PUSH)
 // ─────────────────────────────────────────────────────────────────────────────
 
 type paymentOpKind string
@@ -218,7 +227,7 @@ const (
 	opVerify   paymentOpKind = "VERIFY"
 	opRefund   paymentOpKind = "REFUND"
 	opCheckout paymentOpKind = "CHECKOUT"
-	opUSSD     paymentOpKind = "USSD"
+	opPush     paymentOpKind = "PUSH"
 )
 
 // paymentOp holds the configuration of one custom operation block.
@@ -337,7 +346,7 @@ type PaymentProvider interface {
 	Verify(id string) (PaymentResult, error)
 	Refund(req PaymentRequest) (PaymentResult, error)
 	Checkout(req PaymentRequest) (PaymentResult, error)
-	USSD(req PaymentRequest) (PaymentResult, error)
+	Push(req PaymentRequest) (PaymentResult, error) // was USSD — covers push message, USSD, email, SMS
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -356,6 +365,12 @@ type PaymentConnection struct {
 	webhooks  []paymentWebhook
 	baseDir   string
 	appConfig interface{} // *config.AppConfig — stored as any to avoid import cycle
+
+	// x402/crypto payment support
+	x402       *x402Config          // non-nil for x402/crypto providers
+	schema     *paymentSchemaLink   // link to a DATABASE table for payment tracking
+	userLookup *paymentUserLookup   // JS code to extract user_id from request
+	ttl        time.Duration        // default TTL for payments (0 = permanent/lifetime)
 }
 
 // defaultRequest merges connection defaults into a PaymentRequest.
@@ -387,8 +402,13 @@ func (c *PaymentConnection) Refund(req PaymentRequest) (PaymentResult, error) {
 func (c *PaymentConnection) Checkout(req PaymentRequest) (PaymentResult, error) {
 	return c.provider.Checkout(c.defaultRequest(req))
 }
+func (c *PaymentConnection) Push(req PaymentRequest) (PaymentResult, error) {
+	return c.provider.Push(c.defaultRequest(req))
+}
+
+// USSD is a backward-compat alias for Push.
 func (c *PaymentConnection) USSD(req PaymentRequest) (PaymentResult, error) {
-	return c.provider.USSD(c.defaultRequest(req))
+	return c.Push(req)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -475,6 +495,91 @@ func (d *PaymentDirective) Start() ([]net.Listener, error) {
 		baseDir:  cfg.BaseDir,
 	}
 
+	// ── x402/crypto-specific sub-directives ──────────────────────────────────
+	if _, isX402 := provider.(*x402Provider); isX402 {
+		conn.x402 = &x402Config{
+			wallets:  make(map[string]string),
+			networks: make(map[string]string),
+			scheme:   "exact",
+			useHTTPS: true,
+		}
+		p := provider.(*x402Provider)
+		conn.x402.facilitatorURL = p.facilitatorURL
+		for _, r := range cfg.Routes {
+			cmd := strings.ToUpper(r.Method)
+			switch cmd {
+			case "WALLET":
+				conn.x402.wallets[strings.ToLower(r.Path)] = strings.Trim(r.Handler, "\"'`")
+			case "NETWORK":
+				conn.x402.networks[strings.ToLower(r.Path)] = strings.Trim(r.Handler, "\"'`")
+			case "SCHEME":
+				conn.x402.scheme = strings.ToLower(r.Path)
+			case "USE":
+				conn.x402.useHTTPS = strings.ToLower(r.Path) == "https"
+			}
+		}
+		// Copy wallets/networks into the provider so it can build PaymentRequired
+		p.wallets = conn.x402.wallets
+		p.networks = conn.x402.networks
+		p.scheme = conn.x402.scheme
+	}
+
+	// ── TTL ──────────────────────────────────────────────────────────────────
+	ttlStr := routeScalar(cfg.Routes, "TTL", "")
+	if ttlStr != "" {
+		conn.ttl = parseTTL(ttlStr)
+	}
+
+	// ── SCHEMA 'dbname:table(f1,f2,...)' ────────────────────────────────────
+	schemaStr := routeScalar(cfg.Routes, "SCHEMA", "")
+	if schemaStr != "" {
+		schemaStr = strings.Trim(schemaStr, "\"'`")
+		link, err := parseSchemaLink(schemaStr)
+		if err != nil {
+			log.Printf("PAYMENT %s: SCHEMA parse error: %v", name, err)
+		} else {
+			conn.schema = link
+		}
+	}
+
+	// ── USER_ID_LOOKUP ──────────────────────────────────────────────────────
+	for _, r := range cfg.Routes {
+		if strings.ToUpper(r.Method) == "USER_ID_LOOKUP" {
+			conn.userLookup = &paymentUserLookup{
+				route:   r,
+				baseDir: cfg.BaseDir,
+			}
+			break
+		}
+	}
+
+	// ── Auto-SCHEMA fallback: sqlite://:memory: with default table ──────────
+	if conn.schema == nil {
+		memDB, err := dbpkg.FromURL("sqlite://:memory:")
+		if err != nil {
+			log.Printf("PAYMENT %s: auto-schema memory DB error: %v", name, err)
+		} else {
+			memDB.AutoMigrate(&defaultPaymentRecord{})
+			conn.schema = &paymentSchemaLink{
+				dbName:    "__payment_" + name,
+				tableName: "payments",
+				fields:    []string{"ref", "amount", "currency", "provider", "status", "product", "user", "expiration"},
+				db:        memDB,
+			}
+		}
+	}
+
+	// ── Auto USER_ID_LOOKUP fallback: hash(IP + User-Agent) ─────────────────
+	if conn.userLookup == nil {
+		conn.userLookup = &paymentUserLookup{
+			route: &RouteConfig{
+				Inline:  true,
+				Handler: defaultUserIDLookupJS,
+			},
+			baseDir: cfg.BaseDir,
+		}
+	}
+
 	// REDIRECT directives
 	for _, r := range cfg.Routes {
 		if strings.ToUpper(r.Method) != "REDIRECT" {
@@ -517,6 +622,16 @@ func (d *PaymentDirective) Start() ([]net.Listener, error) {
 			route:   r,
 			baseDir: cfg.BaseDir,
 		})
+	}
+
+	// ── Resolve SCHEMA DB lazily (deferred until first use if from DATABASE) ─
+	if conn.schema != nil && conn.schema.db == nil {
+		dbConn := dbpkg.GetConnection(conn.schema.dbName)
+		if dbConn != nil {
+			conn.schema.db = dbConn.GetDB()
+		} else {
+			log.Printf("PAYMENT %s: SCHEMA db %q not found, will retry on first use", name, conn.schema.dbName)
+		}
 	}
 
 	registerPaymentConnection(name, conn, isDefault)
@@ -682,6 +797,19 @@ func buildPaymentProvider(address string, cfg *DirectiveConfig) (PaymentProvider
 			mode:         mode,
 		}, nil
 
+	case "x402", "crypto":
+		facilitatorURL := "https://" + u.Host + u.Path
+		if strings.HasSuffix(facilitatorURL, "/") {
+			facilitatorURL = strings.TrimRight(facilitatorURL, "/")
+		}
+		return &x402Provider{
+			facilitatorURL: facilitatorURL,
+			mode:           mode,
+			wallets:        make(map[string]string),
+			networks:       make(map[string]string),
+			scheme:         "exact",
+		}, nil
+
 	default:
 		return nil, fmt.Errorf("unsupported payment provider %q", u.Scheme)
 	}
@@ -707,7 +835,8 @@ func buildCustomProvider(cfg *DirectiveConfig) (*customProvider, error) {
 		"VERIFY":   opVerify,
 		"REFUND":   opRefund,
 		"CHECKOUT": opCheckout,
-		"USSD":     opUSSD,
+		"PUSH":     opPush,
+		"USSD":     opPush, // backward compat alias
 	}
 	for _, r := range cfg.Routes {
 		kind, ok := kinds[strings.ToUpper(r.Method)]
@@ -873,8 +1002,8 @@ func (p *customProvider) Refund(req PaymentRequest) (PaymentResult, error) {
 func (p *customProvider) Checkout(req PaymentRequest) (PaymentResult, error) {
 	return p.execute(opCheckout, req)
 }
-func (p *customProvider) USSD(req PaymentRequest) (PaymentResult, error) {
-	return p.execute(opUSSD, req)
+func (p *customProvider) Push(req PaymentRequest) (PaymentResult, error) {
+	return p.execute(opPush, req)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -959,8 +1088,8 @@ func (s *stripeProvider) Checkout(req PaymentRequest) (PaymentResult, error) {
 	}, nil
 }
 
-func (s *stripeProvider) USSD(_ PaymentRequest) (PaymentResult, error) {
-	return PaymentResult{}, fmt.Errorf("stripe: USSD not supported")
+func (s *stripeProvider) Push(_ PaymentRequest) (PaymentResult, error) {
+	return PaymentResult{}, fmt.Errorf("stripe: push payment not supported")
 }
 
 func normalizeStripeStatus(s string) string {
@@ -1061,7 +1190,7 @@ func (f *flutterwaveProvider) Checkout(req PaymentRequest) (PaymentResult, error
 	}, nil
 }
 
-func (f *flutterwaveProvider) USSD(req PaymentRequest) (PaymentResult, error) {
+func (f *flutterwaveProvider) Push(req PaymentRequest) (PaymentResult, error) {
 	body := map[string]any{
 		"tx_ref":   req.OrderID,
 		"amount":   req.Amount,
@@ -1158,8 +1287,8 @@ func (c *cinetpayProvider) Refund(_ PaymentRequest) (PaymentResult, error) {
 func (c *cinetpayProvider) Checkout(req PaymentRequest) (PaymentResult, error) {
 	return c.Charge(req) // CinetPay is always redirect-based
 }
-func (c *cinetpayProvider) USSD(_ PaymentRequest) (PaymentResult, error) {
-	return PaymentResult{}, fmt.Errorf("cinetpay: USSD not supported")
+func (c *cinetpayProvider) Push(_ PaymentRequest) (PaymentResult, error) {
+	return PaymentResult{}, fmt.Errorf("cinetpay: push payment not supported")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1229,8 +1358,8 @@ func (m *mtnProvider) Refund(_ PaymentRequest) (PaymentResult, error) {
 func (m *mtnProvider) Checkout(req PaymentRequest) (PaymentResult, error) {
 	return m.Charge(req)
 }
-func (m *mtnProvider) USSD(req PaymentRequest) (PaymentResult, error) {
-	return m.Charge(req) // MTN MoMo IS a USSD push
+func (m *mtnProvider) Push(req PaymentRequest) (PaymentResult, error) {
+	return m.Charge(req) // MTN MoMo IS a push payment
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1310,7 +1439,7 @@ func (o *orangeProvider) Refund(_ PaymentRequest) (PaymentResult, error) {
 	return PaymentResult{}, fmt.Errorf("orange: refund not supported")
 }
 func (o *orangeProvider) Checkout(req PaymentRequest) (PaymentResult, error) { return o.Charge(req) }
-func (o *orangeProvider) USSD(req PaymentRequest) (PaymentResult, error)     { return o.Charge(req) }
+func (o *orangeProvider) Push(req PaymentRequest) (PaymentResult, error)     { return o.Charge(req) }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Airtel Money provider
@@ -1390,7 +1519,7 @@ func (a *airtelProvider) Refund(_ PaymentRequest) (PaymentResult, error) {
 	return PaymentResult{}, fmt.Errorf("airtel: refund not supported")
 }
 func (a *airtelProvider) Checkout(req PaymentRequest) (PaymentResult, error) { return a.Charge(req) }
-func (a *airtelProvider) USSD(req PaymentRequest) (PaymentResult, error)     { return a.Charge(req) }
+func (a *airtelProvider) Push(req PaymentRequest) (PaymentResult, error)     { return a.Charge(req) }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HTTP helper
@@ -1514,7 +1643,7 @@ func init() {
 
 func (m *PaymentModule) Name() string { return "payment" }
 func (m *PaymentModule) Doc() string {
-	return "Payment module (Stripe, Flutterwave, CinetPay, MTN, Orange, Airtel, custom)"
+	return "Payment module (Stripe, Flutterwave, CinetPay, MTN, Orange, Airtel, x402/crypto, custom)"
 }
 
 func (m *PaymentModule) ToJSObject(vm *goja.Runtime) goja.Value {
@@ -1642,7 +1771,7 @@ func (m *PaymentModule) Loader(_ any, vm *goja.Runtime, moduleObject *goja.Objec
 	)
 
 	// ── Shortcuts delegating to default connection ─────────────────────────────
-	for _, op := range []string{"charge", "verify", "refund", "checkout", "ussd"} {
+	for _, op := range []string{"charge", "verify", "refund", "checkout", "push"} {
 		op := op
 		module.Set(op, func(call goja.FunctionCall) goja.Value {
 			conn := GetPaymentConnection()
@@ -1653,6 +1782,11 @@ func (m *PaymentModule) Loader(_ any, vm *goja.Runtime, moduleObject *goja.Objec
 			return paymentOpFromJS(vm, conn, op, call)
 		})
 	}
+	// Backward-compat alias: ussd → push
+	module.Set("ussd", module.Get("push"))
+
+	// ── get(name) — alias for connection() ─────────────────────────────────────
+	module.Set("get", module.Get("connection"))
 }
 
 // paymentConnProxy wraps a *PaymentConnection as a JS object.
@@ -1662,19 +1796,154 @@ func (m *PaymentModule) Loader(_ any, vm *goja.Runtime, moduleObject *goja.Objec
 //	conn.verify(id)
 //	conn.refund({id, amount, reason})
 //	conn.checkout({amount, currency, orderId})
-//	conn.ussd({phone, amount, currency, orderId})
+//	conn.push({phone, amount, currency, orderId})
+//	conn.ussd()  — alias for push()
+//	conn.isX402
+//	conn.facilitator / wallets / networks / scheme  (x402 only)
+//	conn.isPaid(userID, ref)
 func paymentConnProxy(vm *goja.Runtime, conn *PaymentConnection) goja.Value {
 	obj := vm.NewObject()
 	obj.Set("name", conn.name)
 	obj.Set("currency", conn.currency)
 	obj.Set("mode", conn.mode)
 
-	for _, op := range []string{"charge", "verify", "refund", "checkout", "ussd"} {
+	for _, op := range []string{"charge", "verify", "refund", "checkout", "push"} {
 		op := op
 		obj.Set(op, func(call goja.FunctionCall) goja.Value {
 			return paymentOpFromJS(vm, conn, op, call)
 		})
 	}
+	// Backward-compat alias
+	obj.Set("ussd", obj.Get("push"))
+
+	// ── x402/crypto extensions ──────────────────────────────────────────────
+	obj.Set("isX402", conn.x402 != nil)
+	if conn.x402 != nil {
+		obj.Set("facilitator", conn.x402.facilitatorURL)
+		walletsObj := vm.NewObject()
+		for k, v := range conn.x402.wallets {
+			walletsObj.Set(k, v)
+		}
+		obj.Set("wallets", walletsObj)
+		networksObj := vm.NewObject()
+		for k, v := range conn.x402.networks {
+			networksObj.Set(k, v)
+		}
+		obj.Set("networks", networksObj)
+		obj.Set("scheme", conn.x402.scheme)
+	}
+
+	// ── DB-backed helpers (all providers) ──────────────────────────────────
+	obj.Set("isPaid", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 2 {
+			return vm.ToValue(false)
+		}
+		userID := call.Arguments[0].String()
+		ref := call.Arguments[1].String()
+		paid, _ := checkPaymentExists(conn, userID, ref)
+		return vm.ToValue(paid)
+	})
+
+	obj.Set("getPayments", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 2 {
+			return vm.ToValue([]interface{}{})
+		}
+		userID := call.Arguments[0].String()
+		ref := call.Arguments[1].String()
+		includeExpired := false
+		if len(call.Arguments) > 2 {
+			includeExpired = call.Arguments[2].ToBoolean()
+		}
+		records, err := getPaymentRecords(conn, userID, ref, includeExpired)
+		if err != nil {
+			return vm.ToValue([]interface{}{})
+		}
+		return vm.ToValue(records)
+	})
+
+	obj.Set("getAmountPayments", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return vm.ToValue(0)
+		}
+		userID := call.Arguments[0].String()
+		ref := ""
+		if len(call.Arguments) > 1 && !goja.IsUndefined(call.Arguments[1]) && !goja.IsNull(call.Arguments[1]) {
+			ref = call.Arguments[1].String()
+		}
+		amount := getAmountPayments(conn, userID, ref)
+		return vm.ToValue(amount)
+	})
+
+	obj.Set("totalPayments", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return vm.ToValue(0)
+		}
+		userID := call.Arguments[0].String()
+		ref := ""
+		if len(call.Arguments) > 1 && !goja.IsUndefined(call.Arguments[1]) && !goja.IsNull(call.Arguments[1]) {
+			ref = call.Arguments[1].String()
+		}
+		count := getCountPayments(conn, userID, ref)
+		return vm.ToValue(count)
+	})
+
+	obj.Set("infoPayments", func(call goja.FunctionCall) goja.Value {
+		userID := ""
+		ref := ""
+		includeExpired := false
+		limit := 10
+		offset := 0
+		var start, end *time.Time
+
+		if len(call.Arguments) > 0 && !goja.IsUndefined(call.Arguments[0]) && !goja.IsNull(call.Arguments[0]) {
+			opts := call.Arguments[0].ToObject(vm)
+			if uVal := opts.Get("userID"); uVal != nil && !goja.IsUndefined(uVal) && !goja.IsNull(uVal) {
+				userID = uVal.String()
+			}
+			if refVal := opts.Get("ref"); refVal != nil && !goja.IsUndefined(refVal) && !goja.IsNull(refVal) {
+				ref = refVal.String()
+			}
+			if incVal := opts.Get("include_expired"); incVal != nil && !goja.IsUndefined(incVal) {
+				includeExpired = incVal.ToBoolean()
+			}
+			if limitVal := opts.Get("limit"); limitVal != nil && !goja.IsUndefined(limitVal) {
+				limit = int(limitVal.ToInteger())
+			}
+			if offsetVal := opts.Get("offset"); offsetVal != nil && !goja.IsUndefined(offsetVal) {
+				offset = int(offsetVal.ToInteger())
+			}
+			
+			parseDate := func(v goja.Value) *time.Time {
+				if v == nil || goja.IsUndefined(v) || goja.IsNull(v) {
+					return nil
+				}
+				if exp, ok := v.Export().(time.Time); ok {
+					return &exp
+				} else if str, ok := v.Export().(string); ok {
+					if t, err := time.Parse(time.RFC3339, str); err == nil {
+						return &t
+					} else if t, err := time.Parse("2006-01-02", str); err == nil {
+						return &t
+					}
+				}
+				return nil
+			}
+
+			if startVal := opts.Get("start"); startVal != nil {
+				start = parseDate(startVal)
+			}
+			if endVal := opts.Get("end"); endVal != nil {
+				end = parseDate(endVal)
+			}
+		}
+
+		info, err := getInfoPayments(conn, userID, ref, includeExpired, limit, offset, start, end)
+		if err != nil {
+			return vm.ToValue(map[string]interface{}{"total": 0, "amount": 0, "transactions": []interface{}{}, "expired": []interface{}{}})
+		}
+		return vm.ToValue(info)
+	})
+
 	return obj
 }
 
@@ -1706,8 +1975,8 @@ func paymentOpFromJS(vm *goja.Runtime, conn *PaymentConnection, op string, call 
 			result, opErr = conn.Refund(req)
 		case "checkout":
 			result, opErr = conn.Checkout(req)
-		case "ussd":
-			result, opErr = conn.USSD(req)
+		case "push", "ussd":
+			result, opErr = conn.Push(req)
 		}
 	}
 
@@ -1789,4 +2058,851 @@ func paymentResultThenable(vm *goja.Runtime, result PaymentResult, opErr error) 
 		return obj
 	})
 	return obj
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// x402/crypto provider
+// ─────────────────────────────────────────────────────────────────────────────
+
+type x402Provider struct {
+	facilitatorURL string
+	wallets        map[string]string // "evm" → "0x...", "svm" → "..."
+	networks       map[string]string // "evm" → "eip155:84532"
+	scheme         string            // "exact" | "upto"
+	mode           string            // "sandbox" | "production"
+}
+
+func (x *x402Provider) Charge(_ PaymentRequest) (PaymentResult, error) {
+	return PaymentResult{}, fmt.Errorf("x402: use @payment middleware for crypto payments (pull-based)")
+}
+
+func (x *x402Provider) Verify(id string) (PaymentResult, error) {
+	// In x402, verification is done via the facilitator during the gate flow.
+	return PaymentResult{ID: id, Status: "unknown"}, nil
+}
+
+func (x *x402Provider) Refund(_ PaymentRequest) (PaymentResult, error) {
+	return PaymentResult{}, fmt.Errorf("x402: refunds are managed on-chain")
+}
+
+func (x *x402Provider) Checkout(req PaymentRequest) (PaymentResult, error) {
+	// For x402, "checkout" builds the PaymentRequired response
+	return PaymentResult{
+		Status: "payment_required",
+		Amount: req.Amount,
+	}, nil
+}
+
+func (x *x402Provider) Push(_ PaymentRequest) (PaymentResult, error) {
+	return PaymentResult{}, fmt.Errorf("x402: push payment not supported")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// x402 configuration structures
+// ─────────────────────────────────────────────────────────────────────────────
+
+// x402Config holds configuration specific to x402/crypto providers.
+type x402Config struct {
+	facilitatorURL string            // "https://x402.org/facilitator"
+	wallets        map[string]string // chain → wallet address
+	networks       map[string]string // chain → CAIP-2 network ID
+	scheme         string            // "exact" | "upto"
+	useHTTPS       bool              // USE https|http
+}
+
+// paymentSchemaLink parsed from SCHEMA 'dbname:table(f1,f2,...)'
+// Field order: ref(0), amount(1), currency(2), provider(3), status(4),
+//
+//	product(5), user(6), expiration(7)
+type paymentSchemaLink struct {
+	dbName    string   // "paiements" → db.GetConnection("paiements")
+	tableName string   // "payments"
+	fields    []string // ordered mapping to DB columns
+	db        *gorm.DB // resolved at Start() or lazily
+}
+
+// paymentUserLookup holds the USER_ID_LOOKUP directive (inline JS or file path).
+type paymentUserLookup struct {
+	route   *RouteConfig
+	baseDir string
+}
+
+// paymentGateConfig holds per-route @payment middleware args.
+type paymentGateConfig struct {
+	Name        string // payment connection name
+	Price       string // "$0.001" or "500" (cents)
+	Description string
+	Ref         string // product reference for DB lookup
+	Scheme      string // override: "exact" | "upto"
+	TTLOverride string // override: "1d", "lifetime", etc.
+}
+
+// defaultPaymentRecord is the GORM model for the auto-created in-memory payment table.
+type defaultPaymentRecord struct {
+	ID          string    `gorm:"primaryKey;size:36"`
+	Ref         string    `gorm:"index;size:255"`
+	Amount      float64   `gorm:"not null"`
+	Currency    string    `gorm:"size:10"`
+	Provider    string    `gorm:"size:50"`
+	Status      string    `gorm:"index;size:50"`
+	Product     string    `gorm:"size:255"`
+	User        string    `gorm:"index;size:255"`
+	Expiration  time.Time `gorm:"index"`
+	Description string    `gorm:"size:500"`
+	CreatedAt   time.Time
+}
+
+func (defaultPaymentRecord) TableName() string { return "payments" }
+
+// defaultUserIDLookupJS is the default JS code for USER_ID_LOOKUP:
+// hashes IP + User-Agent to produce a stable anonymous client identifier.
+const defaultUserIDLookupJS = `(function(){
+	var h = require('crypto').createHash('sha256');
+	h.update(req.ip + ':' + (req.headers['user-agent'] || ''));
+	return h.digest('hex').substring(0, 16);
+})()`
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Parser helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+// parseTTL converts a TTL string to a time.Duration.
+// "30d" → 30 days, "5mn" → 5 minutes, "1h" → 1 hour
+// "once", "lifetime", "life", "forever" → 0 (permanent, will use +999 years)
+func parseTTL(s string) time.Duration {
+	s = strings.ToLower(strings.TrimSpace(s))
+	switch s {
+	case "once", "lifetime", "life", "forever":
+		return 0 // permanent
+	default:
+		// Try standard Go duration first
+		if d, err := time.ParseDuration(s); err == nil {
+			return d
+		}
+		// Custom: "30d" → 30 * 24h, "5mn" → 5m
+		s = strings.TrimSpace(s)
+		if strings.HasSuffix(s, "d") {
+			if n, err := strconv.Atoi(strings.TrimSuffix(s, "d")); err == nil {
+				return time.Duration(n) * 24 * time.Hour
+			}
+		}
+		if strings.HasSuffix(s, "mn") {
+			if n, err := strconv.Atoi(strings.TrimSuffix(s, "mn")); err == nil {
+				return time.Duration(n) * time.Minute
+			}
+		}
+		return 30 * 24 * time.Hour // default 30 days
+	}
+}
+
+// parseSchemaLink parses 'dbname:table(f1,f2,...)' into a paymentSchemaLink.
+func parseSchemaLink(s string) (*paymentSchemaLink, error) {
+	// Format: "paiements:payments(ref,amount,currency,provider,status,product,user,expiration)"
+	colonIdx := strings.Index(s, ":")
+	if colonIdx < 0 {
+		return nil, fmt.Errorf("SCHEMA: expected 'dbname:table(fields)', got %q", s)
+	}
+	dbName := s[:colonIdx]
+	rest := s[colonIdx+1:]
+
+	parenIdx := strings.Index(rest, "(")
+	if parenIdx < 0 || !strings.HasSuffix(rest, ")") {
+		return nil, fmt.Errorf("SCHEMA: expected 'table(f1,f2,...)', got %q", rest)
+	}
+	tableName := rest[:parenIdx]
+	fieldsStr := rest[parenIdx+1 : len(rest)-1]
+	fields := strings.Split(fieldsStr, ",")
+	for i := range fields {
+		fields[i] = strings.TrimSpace(fields[i])
+	}
+	if len(fields) < 8 {
+		return nil, fmt.Errorf("SCHEMA: expected 8 fields (ref,amount,currency,provider,status,product,user,expiration), got %d", len(fields))
+	}
+
+	return &paymentSchemaLink{
+		dbName:    dbName,
+		tableName: tableName,
+		fields:    fields,
+	}, nil
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DB helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+// resolveSchemaDB ensures the schema's DB is resolved (lazy resolution).
+func resolveSchemaDB(conn *PaymentConnection) *gorm.DB {
+	if conn.schema == nil {
+		return nil
+	}
+	if conn.schema.db != nil {
+		return conn.schema.db
+	}
+	// Try lazy resolution from registered connections
+	dbConn := dbpkg.GetConnection(conn.schema.dbName)
+	if dbConn != nil {
+		conn.schema.db = dbConn.GetDB()
+		return conn.schema.db
+	}
+	return nil
+}
+
+// checkPaymentExists checks if a valid payment exists in the DB for the given user and ref.
+func checkPaymentExists(conn *PaymentConnection, userID, ref string) (bool, error) {
+	db := resolveSchemaDB(conn)
+	if db == nil || conn.schema == nil || ref == "" {
+		return false, nil
+	}
+	s := conn.schema
+	var count int64
+	db.Table(s.tableName).
+		Where(fmt.Sprintf("%s = ? AND %s = ? AND %s = ? AND %s > ?",
+			s.fields[5], // product
+			s.fields[6], // user
+			s.fields[4], // status
+			s.fields[7], // expiration
+		), ref, userID, "succeeded", time.Now()).
+		Count(&count)
+	return count > 0, nil
+}
+
+// recordPayment inserts a new payment record in the DB.
+func recordPayment(conn *PaymentConnection, userID, ref, product, desc string, amount float64, currency, providerName, status string, ttl time.Duration) error {
+	db := resolveSchemaDB(conn)
+	if db == nil || conn.schema == nil {
+		return fmt.Errorf("payment: no schema DB available")
+	}
+	s := conn.schema
+
+	// Calculate expiration
+	var expiration time.Time
+	if ttl <= 0 {
+		// Permanent: +999 years
+		expiration = time.Now().AddDate(999, 0, 0)
+	} else {
+		expiration = time.Now().Add(ttl)
+	}
+
+	// Generate a unique ref ID
+	refID := fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("%s:%s:%d", userID, ref, time.Now().UnixNano()))))[:32]
+
+	row := map[string]interface{}{
+		"id":        refID,
+		s.fields[0]: refID,     // ref
+		s.fields[1]: amount,    // amount
+		s.fields[2]: currency,  // currency
+		s.fields[3]: providerName, // provider
+		s.fields[4]: status,    // status
+		s.fields[5]: product,   // product (the ref from @payment)
+		s.fields[6]: userID,    // user
+		s.fields[7]: expiration, // expiration
+	}
+
+	return db.Table(s.tableName).Create(row).Error
+}
+
+// getPaymentRecords retrieves payment records by user and ref (product).
+func getPaymentRecords(conn *PaymentConnection, userID, ref string, includeExpired bool) ([]map[string]interface{}, error) {
+	db := resolveSchemaDB(conn)
+	if db == nil || conn.schema == nil {
+		return nil, fmt.Errorf("payment: no schema DB available")
+	}
+	s := conn.schema
+	var result []map[string]interface{}
+	
+	query := db.Table(s.tableName).
+		Where(fmt.Sprintf("%s = ? AND %s = ?", s.fields[6], s.fields[5]), userID, ref)
+		
+	if !includeExpired {
+		query = query.Where(fmt.Sprintf("%s > ?", s.fields[7]), time.Now())
+	}
+	
+	err := query.Order("created_at DESC").Find(&result).Error
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// getAmountPayments returns the sum of amounts for valid, non-expired payments.
+func getAmountPayments(conn *PaymentConnection, userID, ref string) float64 {
+	db := resolveSchemaDB(conn)
+	if db == nil || conn.schema == nil {
+		return 0
+	}
+	s := conn.schema
+	var total float64
+	query := db.Table(s.tableName).
+		Where(fmt.Sprintf("%s = ? AND %s = ? AND %s > ?",
+			s.fields[6], // user
+			s.fields[4], // status
+			s.fields[7], // expiration
+		), userID, "succeeded", time.Now())
+		
+	if ref != "" {
+		query = query.Where(fmt.Sprintf("%s = ?", s.fields[5]), ref)
+	}
+
+	_ = query.Select(fmt.Sprintf("COALESCE(SUM(%s), 0)", s.fields[1])).Row().Scan(&total)
+	return total
+}
+
+// getCountPayments returns the number of valid, non-expired payments.
+func getCountPayments(conn *PaymentConnection, userID, ref string) int64 {
+	db := resolveSchemaDB(conn)
+	if db == nil || conn.schema == nil {
+		return 0
+	}
+	s := conn.schema
+	var count int64
+	query := db.Table(s.tableName).
+		Where(fmt.Sprintf("%s = ? AND %s = ? AND %s > ?",
+			s.fields[6], // user
+			s.fields[4], // status
+			s.fields[7], // expiration
+		), userID, "succeeded", time.Now())
+		
+	if ref != "" {
+		query = query.Where(fmt.Sprintf("%s = ?", s.fields[5]), ref)
+	}
+
+	query.Count(&count)
+	return count
+}
+
+// getInfoPayments returns detailed payment information for a user.
+func getInfoPayments(conn *PaymentConnection, userID, ref string, includeExpired bool, limit, offset int, start, end *time.Time) (map[string]interface{}, error) {
+	db := resolveSchemaDB(conn)
+	if db == nil || conn.schema == nil {
+		return nil, fmt.Errorf("payment: no schema DB available")
+	}
+	s := conn.schema
+	now := time.Now()
+
+	buildQuery := func() *gorm.DB {
+		q := db.Table(s.tableName).
+			Where(fmt.Sprintf("%s = ?", s.fields[4]), "succeeded")
+		if userID != "" {
+			q = q.Where(fmt.Sprintf("%s = ?", s.fields[6]), userID)
+		}
+		if ref != "" {
+			q = q.Where(fmt.Sprintf("%s = ?", s.fields[5]), ref)
+		}
+		if start != nil {
+			q = q.Where("created_at >= ?", *start)
+		}
+		if end != nil {
+			q = q.Where("created_at <= ?", *end)
+		}
+		return q
+	}
+
+	var totalCount int64
+	buildQuery().Where(fmt.Sprintf("%s > ?", s.fields[7]), now).Count(&totalCount)
+	
+	var totalAmount float64
+	_ = buildQuery().Where(fmt.Sprintf("%s > ?", s.fields[7]), now).
+		Select(fmt.Sprintf("COALESCE(SUM(%s), 0)", s.fields[1])).Row().Scan(&totalAmount)
+
+	var transactions []map[string]interface{}
+	err := buildQuery().Where(fmt.Sprintf("%s > ?", s.fields[7]), now).
+		Select("*").Order("created_at DESC").Limit(limit).Offset(offset).Find(&transactions).Error
+	if err != nil {
+		return nil, err
+	}
+	if transactions == nil {
+		transactions = []map[string]interface{}{}
+	}
+
+	// Expired transactions
+	var expired []map[string]interface{}
+	if includeExpired {
+		err := buildQuery().Where(fmt.Sprintf("%s <= ?", s.fields[7]), now).
+			Select("*").Order("created_at DESC").Limit(limit).Offset(offset).Find(&expired).Error
+		if err != nil {
+			return nil, err
+		}
+	}
+	if expired == nil {
+		expired = []map[string]interface{}{}
+	}
+
+	return map[string]interface{}{
+		"total":        totalCount,
+		"amount":       totalAmount,
+		"transactions": transactions,
+		"expired":      expired,
+	}, nil
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// resolveUserID — run USER_ID_LOOKUP JS to extract user ID from request
+// ─────────────────────────────────────────────────────────────────────────────
+
+func resolveUserID(conn *PaymentConnection, c fiber.Ctx) (string, error) {
+	if conn.userLookup == nil {
+		return "", fmt.Errorf("no USER_ID_LOOKUP configured")
+	}
+
+	r := conn.userLookup.route
+	var code string
+	if r.Inline {
+		code = r.Handler
+	} else {
+		full := r.Handler
+		if full == "" {
+			full = r.Path
+		}
+		if !filepath.IsAbs(full) {
+			full = filepath.Join(conn.userLookup.baseDir, full)
+		}
+		b, err := os.ReadFile(full)
+		if err != nil {
+			return "", fmt.Errorf("USER_ID_LOOKUP: cannot read %q: %w", full, err)
+		}
+		code = string(b)
+	}
+
+	vm := processor.New(conn.userLookup.baseDir, c, nil)
+
+	// Provide req object
+	reqObj := vm.NewObject()
+	headersObj := vm.NewObject()
+	c.Request().Header.VisitAll(func(key, value []byte) {
+		headersObj.Set(strings.ToLower(string(key)), string(value))
+	})
+	reqObj.Set("headers", headersObj)
+	reqObj.Set("ip", c.IP())
+	reqObj.Set("method", c.Method())
+	reqObj.Set("path", c.Path())
+	cookiesObj := vm.NewObject()
+	c.Request().Header.VisitAllCookie(func(key, value []byte) {
+		cookiesObj.Set(string(key), string(value))
+	})
+	reqObj.Set("cookies", cookiesObj)
+	vm.Set("req", reqObj)
+
+	val, err := vm.RunString(code)
+	if err != nil {
+		return "", fmt.Errorf("USER_ID_LOOKUP script error: %w", err)
+	}
+
+	if val == nil || goja.IsUndefined(val) || goja.IsNull(val) {
+		return "", fmt.Errorf("USER_ID_LOOKUP returned empty")
+	}
+	userID := val.String()
+	if userID == "" || userID == "undefined" || userID == "null" {
+		return "", fmt.Errorf("USER_ID_LOOKUP returned empty")
+	}
+	return userID, nil
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// x402 Facilitator HTTP client
+// ─────────────────────────────────────────────────────────────────────────────
+
+func x402FacilitatorVerify(facilitatorURL string, payload, details map[string]any) (map[string]any, error) {
+	body := map[string]any{
+		"payload": payload,
+		"details": details,
+	}
+	status, resp, _, err := paymentDoHTTP("POST", facilitatorURL+"/verify", nil, body)
+	if err != nil {
+		return nil, fmt.Errorf("x402 facilitator verify: %w", err)
+	}
+	if status >= 400 {
+		return resp, fmt.Errorf("x402 facilitator verify: HTTP %d", status)
+	}
+	return resp, nil
+}
+
+func x402FacilitatorSettle(facilitatorURL string, payload, details map[string]any) (map[string]any, error) {
+	body := map[string]any{
+		"payload": payload,
+		"details": details,
+	}
+	status, resp, _, err := paymentDoHTTP("POST", facilitatorURL+"/settle", nil, body)
+	if err != nil {
+		return nil, fmt.Errorf("x402 facilitator settle: %w", err)
+	}
+	if status >= 400 {
+		return resp, fmt.Errorf("x402 facilitator settle: HTTP %d", status)
+	}
+	return resp, nil
+}
+
+// x402BuildPaymentRequired builds the PaymentRequired JSON structure for the 402 response.
+func x402BuildPaymentRequired(conn *PaymentConnection, price, desc, mimeType, scheme string) map[string]any {
+	if scheme == "" && conn.x402 != nil {
+		scheme = conn.x402.scheme
+	}
+	if scheme == "" {
+		scheme = "exact"
+	}
+	if mimeType == "" {
+		mimeType = "application/json"
+	}
+
+	accepts := []map[string]any{}
+	if conn.x402 != nil {
+		for chain, wallet := range conn.x402.wallets {
+			networkID := conn.x402.networks[chain]
+			if networkID == "" {
+				continue
+			}
+			accepts = append(accepts, map[string]any{
+				"scheme":    scheme,
+				"maxAmountRequired": price,
+				"network":   networkID,
+				"payTo":     wallet,
+				"resource":  desc,
+			})
+		}
+	}
+
+	return map[string]any{
+		"accepts":     accepts,
+		"description": desc,
+		"mimeType":    mimeType,
+		"maxAmountRequired": price,
+		"scheme":      scheme,
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Payment Gate Middleware — @payment[name=... price=... ref=...]
+// ─────────────────────────────────────────────────────────────────────────────
+
+// paymentGateMiddleware creates a Fiber middleware that gates route access behind payment.
+func paymentGateMiddleware(cfg paymentGateConfig) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		conn := GetPaymentConnection(cfg.Name)
+		if conn == nil {
+			return c.Status(500).SendString("payment: connection not found: " + cfg.Name)
+		}
+
+		// 1. USER_ID_LOOKUP — run JS to extract user ID
+		userID, err := resolveUserID(conn, c)
+		if err != nil {
+			return c.Status(401).JSON(fiber.Map{
+				"error":   "Unauthorized",
+				"message": err.Error(),
+			})
+		}
+
+		// 2. DB check — already paid?
+		if conn.schema != nil && cfg.Ref != "" {
+			paid, _ := checkPaymentExists(conn, userID, cfg.Ref)
+			if paid {
+				c.Locals("payment_user_id", userID)
+				c.Locals("payment_ref", cfg.Ref)
+				c.Locals("payment_status", "succeeded")
+				c.Locals("payment_provider", conn.name)
+				return c.Next()
+			}
+		}
+
+		// 3. Provider-specific gate
+		if conn.x402 != nil {
+			return handleX402Gate(c, conn, cfg, userID)
+		}
+		return handleClassicGate(c, conn, cfg, userID)
+	}
+}
+
+// handleX402Gate handles the x402/crypto payment gate flow.
+func handleX402Gate(c fiber.Ctx, conn *PaymentConnection, cfg paymentGateConfig, userID string) error {
+	// Check for PAYMENT-SIGNATURE header
+	sigHeader := c.Get("X-PAYMENT")
+	if sigHeader == "" {
+		sigHeader = c.Get("Payment")
+	}
+
+	if sigHeader == "" {
+		// No payment signature → return 402 with PaymentRequired
+		pr := x402BuildPaymentRequired(conn, cfg.Price, cfg.Description, "", cfg.Scheme)
+
+		prJSON, _ := json.Marshal(pr)
+		prB64 := base64.StdEncoding.EncodeToString(prJSON)
+		c.Set("X-PAYMENT-REQUIRED", prB64)
+
+		return c.Status(402).JSON(pr)
+	}
+
+	// Decode the payment signature
+	sigBytes, err := base64.StdEncoding.DecodeString(sigHeader)
+	if err != nil {
+		// Try raw JSON
+		sigBytes = []byte(sigHeader)
+	}
+
+	var paymentPayload map[string]any
+	if err := json.Unmarshal(sigBytes, &paymentPayload); err != nil {
+		return c.Status(400).JSON(fiber.Map{
+			"error":   "Invalid payment signature",
+			"message": err.Error(),
+		})
+	}
+
+	// Build payment details
+	details := map[string]any{
+		"description": cfg.Description,
+		"maxAmountRequired": cfg.Price,
+		"scheme":      cfg.Scheme,
+	}
+	if cfg.Scheme == "" && conn.x402 != nil {
+		details["scheme"] = conn.x402.scheme
+	}
+
+	// Verify with facilitator
+	verifyResp, err := x402FacilitatorVerify(conn.x402.facilitatorURL, paymentPayload, details)
+	if err != nil {
+		return c.Status(402).JSON(fiber.Map{
+			"error":   "Payment verification failed",
+			"message": err.Error(),
+			"details": verifyResp,
+		})
+	}
+
+	isValid := false
+	if v, ok := verifyResp["valid"].(bool); ok {
+		isValid = v
+	}
+	if !isValid {
+		pr := x402BuildPaymentRequired(conn, cfg.Price, cfg.Description, "", cfg.Scheme)
+		prJSON, _ := json.Marshal(pr)
+		c.Set("X-PAYMENT-REQUIRED", base64.StdEncoding.EncodeToString(prJSON))
+		return c.Status(402).JSON(fiber.Map{
+			"error":    "Payment invalid",
+			"details":  verifyResp,
+			"required": pr,
+		})
+	}
+
+	// Settle with facilitator
+	settleResp, err := x402FacilitatorSettle(conn.x402.facilitatorURL, paymentPayload, details)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{
+			"error":   "Payment settlement failed",
+			"message": err.Error(),
+		})
+	}
+
+	// Record payment in DB
+	ttl := conn.ttl
+	if cfg.TTLOverride != "" {
+		ttl = parseTTL(cfg.TTLOverride)
+	}
+
+	amount := parsePrice(cfg.Price)
+	_ = recordPayment(conn, userID, cfg.Ref, cfg.Ref, cfg.Description, amount, conn.currency, "x402", "succeeded", ttl)
+
+	// Set response headers
+	settleJSON, _ := json.Marshal(settleResp)
+	c.Set("X-PAYMENT-RESPONSE", base64.StdEncoding.EncodeToString(settleJSON))
+
+	// Inject payment context for JS handlers
+	c.Locals("payment_user_id", userID)
+	c.Locals("payment_ref", cfg.Ref)
+	c.Locals("payment_status", "succeeded")
+	c.Locals("payment_provider", "x402")
+	c.Locals("payment_settle_response", settleResp)
+
+	return c.Next()
+}
+
+// handleClassicGate handles the classic (Stripe/MoMo/etc.) payment gate flow.
+func handleClassicGate(c fiber.Ctx, conn *PaymentConnection, cfg paymentGateConfig, userID string) error {
+	// Not paid → create checkout/charge session
+	amount := parsePrice(cfg.Price)
+	req := PaymentRequest{
+		Amount:  amount,
+		OrderID: cfg.Ref,
+		Email:   c.Get("X-User-Email"),
+		Metadata: map[string]any{
+			"user_id":     userID,
+			"ref":         cfg.Ref,
+			"description": cfg.Description,
+		},
+	}
+
+	result, err := conn.Checkout(req)
+	if err != nil {
+		// Fallback to charge if checkout not supported
+		result, err = conn.Charge(req)
+	}
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{
+			"error":   "Payment initiation failed",
+			"message": err.Error(),
+		})
+	}
+
+	return c.Status(402).JSON(fiber.Map{
+		"provider":    conn.name,
+		"redirectUrl": result.RedirectURL,
+		"sessionId":   result.ID,
+		"ref":         cfg.Ref,
+		"amount":      amount,
+		"currency":    conn.currency,
+		"status":      result.Status,
+	})
+}
+
+// parsePrice converts a price string to a float64.
+// "$0.001" → 0.001, "500" → 500.0
+func parsePrice(s string) float64 {
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "$")
+	s = strings.TrimPrefix(s, "€")
+	s = strings.TrimPrefix(s, "£")
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 0
+	}
+	return f
+}
+
+// MountPaymentRoutes mounts the standard payment API routes for a connection.
+// Used by auto-mount when @payment is used without explicit PAYMENT [name] /prefix.
+func MountPaymentRoutes(app *httpserver.HTTP, conn *PaymentConnection, prefix string) {
+	prefix = strings.TrimRight(prefix, "/")
+
+	// POST /prefix/charge
+	app.Post(prefix+"/charge", func(c fiber.Ctx) error {
+		var body map[string]interface{}
+		if err := c.Bind().JSON(&body); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+		}
+		req := paymentRequestFromJS(body, conn)
+		result, err := conn.Charge(req)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.JSON(result)
+	})
+
+	// GET /prefix/verify/:id
+	app.Get(prefix+"/verify/:id", func(c fiber.Ctx) error {
+		result, err := conn.Verify(c.Params("id"))
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.JSON(result)
+	})
+
+	// POST /prefix/refund
+	app.Post(prefix+"/refund", func(c fiber.Ctx) error {
+		var body map[string]interface{}
+		if err := c.Bind().JSON(&body); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+		}
+		req := paymentRequestFromJS(body, conn)
+		result, err := conn.Refund(req)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.JSON(result)
+	})
+
+	// POST /prefix/checkout
+	app.Post(prefix+"/checkout", func(c fiber.Ctx) error {
+		var body map[string]interface{}
+		if err := c.Bind().JSON(&body); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+		}
+		req := paymentRequestFromJS(body, conn)
+		result, err := conn.Checkout(req)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.JSON(result)
+	})
+
+	// POST /prefix/push (was /ussd)
+	app.Post(prefix+"/push", func(c fiber.Ctx) error {
+		var body map[string]interface{}
+		if err := c.Bind().JSON(&body); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+		}
+		req := paymentRequestFromJS(body, conn)
+		result, err := conn.Push(req)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.JSON(result)
+	})
+
+	// GET /prefix/transaction
+	app.Get(prefix+"/transaction", func(c fiber.Ctx) error {
+		userID, err := resolveUserID(conn, c)
+		if err != nil {
+			return c.Status(401).JSON(fiber.Map{"error": err.Error()})
+		}
+
+		ref := c.Query("ref")
+		includeExpired := c.Query("include_expired") == "true"
+		limit := 10
+		if l, err := strconv.Atoi(c.Query("limit")); err == nil && l > 0 {
+			limit = l
+		}
+		offset := 0
+		if o, err := strconv.Atoi(c.Query("offset")); err == nil && o >= 0 {
+			offset = o
+		}
+		if p, err := strconv.Atoi(c.Query("page")); err == nil && p > 0 {
+			offset = (p - 1) * limit
+		}
+
+		var start, end *time.Time
+		if s := c.Query("start"); s != "" {
+			if t, err := time.Parse(time.RFC3339, s); err == nil {
+				start = &t
+			} else if t, err := time.Parse("2006-01-02", s); err == nil {
+				start = &t
+			}
+		}
+		if e := c.Query("end"); e != "" {
+			if t, err := time.Parse(time.RFC3339, e); err == nil {
+				end = &t
+			} else if t, err := time.Parse("2006-01-02", e); err == nil {
+				end = &t
+			}
+		}
+
+		info, err := getInfoPayments(conn, userID, ref, includeExpired, limit, offset, start, end)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.JSON(info)
+	})
+
+	// POST /prefix/webhook
+	app.Post(prefix+"/webhook", func(c fiber.Ctx) error {
+		// Process webhooks from all configured webhook handlers
+		for i := range conn.webhooks {
+			wh := &conn.webhooks[i]
+			if err := handlePaymentWebhook(c, conn, wh); err != nil {
+				return err
+			}
+		}
+
+		// For x402 provider: auto-record payment from webhook data
+		if conn.x402 != nil {
+			var body map[string]interface{}
+			if err := json.Unmarshal(c.Body(), &body); err == nil {
+				status := payStr(body, "status")
+				ref := payStr(body, "ref")
+				userID := payStr(body, "user_id")
+				amount := payFloat(body, "amount")
+				if status == "succeeded" && ref != "" && userID != "" {
+					_ = recordPayment(conn, userID, ref, ref, "", amount, conn.currency, "x402", "succeeded", conn.ttl)
+				}
+			}
+		}
+
+		return c.SendStatus(200)
+	})
+
+	log.Printf("PAYMENT: auto-mounted %q routes on %s", conn.name, prefix)
 }

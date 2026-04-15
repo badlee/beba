@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"http-server/modules/binder"
+	"http-server/modules/db"
 	"http-server/modules/security"
 	"http-server/modules/sse"
 	"http-server/plugins/config"
@@ -128,6 +129,22 @@ END TCP
 			t.Fatalf("Failed to publish: %v", token.Error())
 		}
 		
+		// Wait a bit for async storage write if any (though Mochi hooks are usually sync)
+		time.Sleep(500 * time.Millisecond)
+
+		// --- EXTRACTED VERIFICATION: Check DB before restart ---
+		verifiedDB, err := db.FromURL("sqlite://" + dbFile)
+		if err != nil {
+			t.Fatalf("Failed to open DB for verification: %v", err)
+		}
+		var count int64
+		verifiedDB.Table("mqtt_retaineds").Count(&count)
+		t.Logf("Retained messages in DB before restart: %d", count)
+		if count == 0 {
+			t.Error("No retained messages found in DB before restart! Storage hook might not be working.")
+		}
+		// --------------------------------------------------------
+
 		client.Disconnect(100)
 		
 		// --- STABILIZATION: FULL RESTART ---
@@ -150,6 +167,9 @@ END TCP
 		
 		addr2 := getAddr(m2, errCh2)
 		// ----------------------------------
+		// STABILIZATION: Allow Mochi's async srv.Serve() goroutine to finish restoring 
+		// retained messages and subscriptions from the hook before the client connects.
+		time.Sleep(1 * time.Second)
 		
 		received := make(chan string, 1)
 		opts2 := mqtt.NewClientOptions().AddBroker("tcp://" + addr2).SetClientID("test_client_2")

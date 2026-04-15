@@ -34,57 +34,7 @@ func NewMQTTDirective(config *DirectiveConfig) (*MQTTDirective, error) {
 		cfg: config,
 	}
 
-	// ── 1. Create Default Capabilities ──
-	opts := &mqtt.Options{
-		Capabilities: mqtt.NewDefaultServerCapabilities(),
-	}
-
-	// ── 2. Parse OPTIONS ──
-	optionsRoutes := config.GetRoutes("OPTIONS")
-	if len(optionsRoutes) > 0 {
-		parseMQTTOptions(opts, optionsRoutes[0])
-	}
-
-	// ── 3. Parse STORAGE ──
-	var storageDB *gorm.DB
-	storageRoutes := config.GetRoutes("STORAGE")
-	if len(storageRoutes) > 0 {
-		dbName := storageRoutes[0].Path
-		conn := db.GetConnection(dbName)
-		if conn == nil {
-			conn = db.GetDefaultConnection()
-		}
-
-		if conn != nil {
-			storageDB = conn.GetDB()
-		} else {
-			fmt.Printf("MQTT WARNING: STORAGE %s specified but no DB connection found!\n", dbName)
-		}
-	}
-
-	// ── 4. Parse SECURITY (WAF/Connection level Filters) ──
-	var wafConfig *httpserver.WAFConfig
-	securityRoutes := config.GetRoutes("SECURITY")
-	if len(securityRoutes) > 0 {
-		policyName := securityRoutes[0].Path
-		wafConfig = httpserver.GetWAF(policyName)
-		if wafConfig != nil {
-			wafConfig.AppName = config.Name
-			// Register connection-level policy to the global security engine
-			if wafConfig.Connection != nil {
-				security.GetEngine().LoadPolicy(policyName, wafConfig.Connection)
-			}
-		}
-	}
-	_ = wafConfig
-
-	// ── 5. Prepare MQTTConfig ──
-	mqttConfig := sse.MQTTConfig{
-		ListenerAddress: config.Address,
-		StorageDB:       storageDB,
-	}
-
-	// ── 6. Prepare Authentication, ACLs and JS Hooks ──
+	// ── 1. Prepare Authentication, ACLs and JS Hooks ──
 	envMap := make(map[string]string)
 	for k, v := range config.Env {
 		envMap[k] = v
@@ -92,21 +42,9 @@ func NewMQTTDirective(config *DirectiveConfig) (*MQTTDirective, error) {
 	directive.hooks = sse.NewMQTTHooksDispatcher(config.BaseDir, envMap)
 	parseMQTTAuthAndACL(directive.hooks, config)
 
-	// Inject the dynamic JS engine proxy into the MQTT hook bindings
-	mqttConfig.Auth = directive.hooks.AuthFunc()
-	mqttConfig.OnConnect = directive.hooks.OnConnectFunc()
-	mqttConfig.OnDisconnect = directive.hooks.OnDisconnectFunc()
-	mqttConfig.OnPublish = directive.hooks.OnPublishFunc()
-	// Register the ACL / ON event / BRIDGE hook with Mochi directly
-	mqttConfig.DynamicHook = sse.NewDynamicMochiHook(directive.hooks)
+	// Note: Engine instantiation (SSE MQTT Server) is now deferred to Start()
+	// to ensure DATABASE dependencies are resolved after groups have started.
 
-	// ── 7. Instantiate Engine ──
-	srv, err := sse.NewMQTTServer(mqttConfig, opts)
-	if err != nil {
-		return nil, fmt.Errorf("MQTT: Failed to initialize Mochi Engine: %v", err)
-	}
-
-	directive.server = srv
 	return directive, nil
 }
 
@@ -122,6 +60,69 @@ func (d *MQTTDirective) Address() string {
 
 // Start boots the native tcp listener (already booted by NewMQTTServer internally, returning dummy here for Directive compat).
 func (d *MQTTDirective) Start() ([]net.Listener, error) {
+	// ── 1. Resolve Storage (Lazy resolution to allow DATABASE directive to start first) ──
+	var storageDB *gorm.DB
+	storageRoutes := d.cfg.GetRoutes("STORAGE")
+	if len(storageRoutes) > 0 {
+		dbName := storageRoutes[0].Path
+		conn := db.GetConnection(dbName)
+		if conn == nil {
+			conn = db.GetDefaultConnection()
+		}
+
+		if conn != nil {
+			storageDB = conn.GetDB()
+		} else {
+			log.Printf("MQTT WARNING: STORAGE %s specified but no DB connection found at startup!", dbName)
+		}
+	}
+
+	// ── 2. Parse SECURITY (WAF/Connection level Filters) ──
+	securityRoutes := d.cfg.GetRoutes("SECURITY")
+	if len(securityRoutes) > 0 {
+		policyName := securityRoutes[0].Path
+		wafConfig := httpserver.GetWAF(policyName)
+		if wafConfig != nil {
+			wafConfig.AppName = d.cfg.Name
+			// Register connection-level policy to the global security engine
+			if wafConfig.Connection != nil {
+				security.GetEngine().LoadPolicy(policyName, wafConfig.Connection)
+			}
+		}
+	}
+
+	// ── 3. Instantiate Engine if not already done ──
+	// Note: We move full instantiation here because it depends on the DB connection
+	// which is only guaranteed to be registered after DATABASE.Start()
+	if d.server == nil {
+		opts := &mqtt.Options{
+			Capabilities: mqtt.NewDefaultServerCapabilities(),
+		}
+		optionsRoutes := d.cfg.GetRoutes("OPTIONS")
+		if len(optionsRoutes) > 0 {
+			parseMQTTOptions(opts, optionsRoutes[0])
+		}
+
+		// Prepare MQTTConfig
+		mqttConfig := sse.MQTTConfig{
+			ListenerAddress: d.cfg.Address,
+			StorageDB:       storageDB,
+		}
+
+		// Hooks and remaining config
+		mqttConfig.Auth = d.hooks.AuthFunc()
+		mqttConfig.OnConnect = d.hooks.OnConnectFunc()
+		mqttConfig.OnDisconnect = d.hooks.OnDisconnectFunc()
+		mqttConfig.OnPublish = d.hooks.OnPublishFunc()
+		mqttConfig.DynamicHook = sse.NewDynamicMochiHook(d.hooks)
+
+		srv, err := sse.NewMQTTServer(mqttConfig, opts)
+		if err != nil {
+			return nil, fmt.Errorf("MQTT: Failed to initialize Mochi Engine: %v", err)
+		}
+		d.server = srv
+	}
+
 	// Let the binder Manager handle Accept() enforcing Security checks
 	log.Printf("MQTT: Listening on %s", d.cfg.Address)
 	ln, err := net.Listen("tcp", d.cfg.Address)

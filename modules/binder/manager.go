@@ -346,6 +346,10 @@ func (m *Manager) acceptLoop(ln net.Listener, protocols []Directive, policyName 
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
+			if strings.Contains(err.Error(), "use of closed network connection") || errors.Is(err, net.ErrClosed) {
+				log.Printf("Manager: Protocol listener closed, exiting accept loop for policy %q", policyName)
+				return
+			}
 			log.Printf("Accept error: %v", err)
 			continue
 		}
