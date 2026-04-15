@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
-	"github.com/dop251/goja"
 	"github.com/gofiber/fiber/v3"
 )
 
@@ -87,7 +86,7 @@ func (m *mockCtx) Method(args ...string) string {
 	return "GET"
 }
 
-func runTemplateTest(filePath string, cfg *config.AppConfig) error {
+func runTemplateTest(filePath string, cfg *config.AppConfig, root string) error {
 	// 1. Redirect Logs
 	stdoutFile, _ := os.Create(cfg.Stdout)
 	stderrFile, _ := os.Create(cfg.Stderr)
@@ -184,7 +183,8 @@ func runTemplateTest(filePath string, cfg *config.AppConfig) error {
 			}
 		}
 		// Try JS expression
-		vm := goja.New()
+		vm := processor.New(root, nil, cfg)
+		vm.AttachGlobals()
 
 		targets.Each(func(i int, s *goquery.Selection) {
 			stdout, _ := os.ReadFile(cfg.Stdout)

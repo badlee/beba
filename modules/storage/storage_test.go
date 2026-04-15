@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"http-server/processor"
 	"strings"
 	"testing"
 
@@ -13,7 +14,8 @@ import (
 )
 
 func TestJWTSession(t *testing.T) {
-	vm := goja.New()
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
 
 	// Mock cookie object
 	cookieData := make(map[string]string)
@@ -42,7 +44,7 @@ func TestJWTSession(t *testing.T) {
 	exports := vm.NewObject()
 	module := vm.NewObject()
 	module.Set("exports", exports)
-	mod.Loader(nil, vm, module)
+	mod.Loader(nil, vm.Runtime, module)
 
 	vm.Set("cookies", cookies)
 	vm.Set("cookieData", cookieData)
@@ -142,7 +144,8 @@ func TestStorageUnset(t *testing.T) {
 	}
 	db.AutoMigrate(&StorageItem{})
 
-	vm := goja.New()
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
 	mod := &Module{}
 
 	// Hijack persistentDB for the test.
@@ -153,7 +156,7 @@ func TestStorageUnset(t *testing.T) {
 	exports := vm.NewObject()
 	module := vm.NewObject()
 	module.Set("exports", exports)
-	mod.Loader(nil, vm, module)
+	mod.Loader(nil, vm.Runtime, module)
 
 	vm.Set("sess", exports.Get("session"))
 
@@ -177,13 +180,14 @@ func TestStorageUnset(t *testing.T) {
 }
 
 func TestStorageAdvanced(t *testing.T) {
-	vm := goja.New()
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
 	mod := &Module{}
 	exports := vm.NewObject()
 	module := vm.NewObject()
 	module.Set("exports", exports)
 
-	mod.Loader(nil, vm, module) // Passing nil context for config test
+	mod.Loader(nil, vm.Runtime, module) // Passing nil context for config test
 
 	vm.Set("exports", exports)
 	script := `

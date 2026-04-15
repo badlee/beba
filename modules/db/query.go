@@ -214,7 +214,14 @@ func (q *Query) Exec() ([]*Document, error) {
 
 	db := q.db
 	for _, p := range q.preloads {
-		db = db.Preload(p)
+		targetName := q.getTargetModelName(p)
+		if targetName != "" {
+			db = db.Preload(p, func(tx *gorm.DB) *gorm.DB {
+				return tx.Table(targetName)
+			})
+		} else {
+			db = db.Preload(p)
+		}
 	}
 
 	if err := db.Find(slicePtr.Interface()).Error; err != nil {
@@ -426,4 +433,34 @@ func serializeValue(v reflect.Value) interface{} {
 	default:
 		return v.Interface()
 	}
+}
+func (q *Query) getTargetModelName(assocName string) string {
+	for fieldName, fieldSchema := range q.model.Schema.Paths {
+		if fieldSchema.Ref == "" {
+			continue
+		}
+
+		refParts := strings.Split(fieldSchema.Ref, ".")
+		targetName := refParts[0]
+
+		currentAssocName := ToCamelCase(targetName)
+		if fieldSchema.Has == "many" || fieldSchema.Has == "many2many" {
+			currentAssocName = ToCamelCase(fieldName)
+		}
+
+		if fieldSchema.Has != "many" && fieldSchema.Has != "many2many" {
+			currentAssocName += "Ref"
+		}
+
+		if currentAssocName == assocName {
+			return targetName
+		}
+	}
+
+	// Try nested preloads (experimental)
+	if strings.Contains(assocName, ".") {
+		return "" // Not supported yet
+	}
+
+	return ""
 }

@@ -2,9 +2,9 @@ package db
 
 import (
 	"fmt"
+	"http-server/processor"
 	"testing"
 
-	"github.com/dop251/goja"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
@@ -13,7 +13,8 @@ import (
 
 func TestDocumentPropertySync(t *testing.T) {
 	db, _ := gorm.Open(sqlite.New(sqlite.Config{DriverName: "sqlite", DSN: ":memory:"}), &gorm.Config{})
-	vm := goja.New()
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
 
 	schema := &Schema{
 		Paths: map[string]SchemaType{
@@ -36,7 +37,7 @@ func TestDocumentPropertySync(t *testing.T) {
 		isNew: false,
 	}
 
-	jsDoc := doc.ToJSObject(vm)
+	jsDoc := doc.ToJSObject(vm.Runtime)
 	vm.Set("user", jsDoc)
 
 	// Test 1: Property assignment updates Go data
@@ -69,8 +70,8 @@ func TestDocumentPropertySync(t *testing.T) {
 	}
 
 	// Test 4: Static save delegation
-	conn := &Connection{db: db, vm: vm}
-	vm.Set("User", conn.createModelProxy(vm, model))
+	conn := &Connection{db: db, vm: vm.Runtime}
+	vm.Set("User", conn.createModelProxy(model))
 	_, err = vm.RunString(`User.save(user);`)
 	if err != nil {
 		t.Fatalf("Static save failed: %v", err)

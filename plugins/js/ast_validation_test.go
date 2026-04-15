@@ -130,8 +130,8 @@ func TestContainsReturn(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to parse %q: %v", src, err)
 			}
-			if got := ContainsReturn(prg); got != tt.want {
-				t.Errorf("ContainsReturn() = %v, want %v for src %q", got, tt.want, src)
+			if got := containsReturn(prg); got != tt.want {
+				t.Errorf("containsReturn() = %v, want %v for src %q", got, tt.want, src)
 			}
 		})
 	}

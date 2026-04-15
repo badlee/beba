@@ -1277,7 +1277,7 @@ func registerRewritesRedirects(app *httpserver.HTTP, rewrites, redirects []*Rout
 			return true
 		}
 		vm := processor.New(config.BaseDir, c, config.AppConfig)
-		processor.Register(vm, "ctx", c)
+		vm.Register("ctx", c)
 		v, err := vm.RunString(fmt.Sprintf("(function(){ with(ctx){ return Boolean(%s); } })()", cond))
 		if err != nil {
 			fmt.Printf("REWRITE/REDIRECT condition error [%q]: %v\n", cond, err)
@@ -1357,7 +1357,7 @@ func injectSettings(vm *goja.Runtime, settings Arguments) {
 
 func runJSHandler(c fiber.Ctx, code []byte, config *DirectiveConfig, settings Arguments) error {
 	vm := processor.New(config.BaseDir, c, config.AppConfig)
-	injectSettings(vm, settings)
+	injectSettings(vm.Runtime, settings)
 
 	done := make(chan goja.Value, 1)
 	errChan := make(chan error, 1)
@@ -1384,13 +1384,13 @@ func runJSHandler(c fiber.Ctx, code []byte, config *DirectiveConfig, settings Ar
 		return c.Status(504).SendString("JS Timeout")
 	}
 
-	return sendJSResult(c, vm, res, "")
+	return sendJSResult(c, vm.Runtime, res, "")
 }
 
 func runErrorJSHandler(c fiber.Ctx, code int, handlerCode []byte, origErr error, config *DirectiveConfig, settings Arguments) error {
 	vm := processor.New(config.BaseDir, c, config.AppConfig)
 	vm.Set("error", origErr.Error())
-	injectSettings(vm, settings)
+	injectSettings(vm.Runtime, settings)
 
 	res, vmErr := vm.RunString(string(handlerCode))
 	if vmErr != nil {
@@ -1401,7 +1401,7 @@ func runErrorJSHandler(c fiber.Ctx, code int, handlerCode []byte, origErr error,
 		if len(c.Response().Body()) > 0 {
 			return nil
 		}
-		if out := jsOutput(vm); out != "" {
+		if out := jsOutput(vm.Runtime); out != "" {
 			return c.Status(code).SendString(out)
 		}
 		return nil
@@ -1424,12 +1424,12 @@ func runFileHandler(c fiber.Ctx, fullPath string, config *DirectiveConfig, setti
 			return c.Status(500).SendString("File Error: " + err.Error())
 		}
 		vm := processor.New(filepath.Dir(fullPath), c, config.AppConfig)
-		injectSettings(vm, settings)
+		injectSettings(vm.Runtime, settings)
 		res, err := vm.RunString(string(b))
 		if err != nil {
 			return fiberErrorFromJS(c, err, 500)
 		}
-		return sendJSResult(c, vm, res, "")
+		return sendJSResult(c, vm.Runtime, res, "")
 	}
 	if strings.HasSuffix(fullPath, ".html") || strings.HasSuffix(fullPath, ".htm") {
 		b, err := os.ReadFile(fullPath)
@@ -1461,12 +1461,12 @@ func runFSHandler(c fiber.Ctx, fullPath string, config *DirectiveConfig, setting
 			return c.Status(500).SendString("File Error: " + err.Error())
 		}
 		vm := processor.New(filepath.Dir(fullPath), c, config.AppConfig)
-		injectSettings(vm, settings)
+		injectSettings(vm.Runtime, settings)
 		res, err := vm.RunString(string(b))
 		if err != nil {
 			return fiberErrorFromJS(c, err, 500)
 		}
-		return sendJSResult(c, vm, res, "")
+		return sendJSResult(c, vm.Runtime, res, "")
 	}
 	if strings.HasSuffix(fullPath, config.AppConfig.TemplateExt) {
 		b, err := os.ReadFile(fullPath)

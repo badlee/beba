@@ -91,7 +91,24 @@ END DATABASE
 
 ---
 
-## 3. JavaScript API — `require('db')`
+## 3. Dynamic Migration Strategy (Dual Struct)
+
+`http-server` implements a sophisticated, "anti-panic" migration strategy designed to bypass GORM limitations with dynamic types.
+
+### 3.1 The Problem
+When creating a database schema at runtime (via `.bind` or JS), GORM often struggles with unnamed types for relationships, leading to segmentation violations or invalid SQL syntax during `AutoMigrate`.
+
+### 3.2 The Solution: Dual Struct
+The system generates two internal Go structs for every schema:
+1.  **Migration Struct**: Contains only base columns (IDs, Dates, Strings, Numbers). All relationship fields are **skipped** to ensure the table structure is created safely without complex FK dependency chains.
+2.  **Runtime Struct**: A full model including shadow fields (`UserRef`), virtuals, and association preloading logic, used for all subsequent CRUD operations.
+
+### 3.3 Bulk Migration
+To ensure integrity, it is recommended to define all `SCHEMA` blocks first and then perform a **Bulk Migration**. The unified `DATABASE` directive automatically handles this by registering all models and calling `AutoMigrate` once for the entire connection, resolving FK constraints in a single pass.
+
+---
+
+## 4. JavaScript API — `require('db')`
 
 ### Initialization
 ```javascript

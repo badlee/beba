@@ -13,7 +13,6 @@ import (
 	"http-server/modules"
 	"http-server/modules/crud"
 	"http-server/modules/db"
-	"http-server/plugins/js"
 	"http-server/processor"
 )
 
@@ -26,6 +25,7 @@ type DatabaseDirective struct {
 	databases []string
 	crud      *CrudProtocol
 	conn      *db.Connection
+	Schemas   map[string]map[string]db.SchemaType // Parsed schemas for metadata/testing
 }
 
 // CrudProtocol is a wrapper around crud.CrudDirective to override its name.
@@ -50,13 +50,8 @@ func NewDatabaseDirective(c *DirectiveConfig) (Directive, error) {
 	for _, r := range c.Routes {
 		cmd := strings.ToUpper(r.Method)
 		switch cmd {
-		case "NAMESPACE", "ROLE", "OAUTH2", "ADMIN":
+		case "NAMESPACE", "ROLE", "OAUTH2", "ADMIN", "SCHEMA":
 			isCrud = true
-		case "SCHEMA":
-			// If it's a SCHEMA block, we check if it follows CRUD syntax (DEFINE)
-			if r.IsGroup {
-				isCrud = true
-			}
 		case "NAME", "SECRET":
 			isCrud = true
 		}
@@ -64,6 +59,9 @@ func NewDatabaseDirective(c *DirectiveConfig) (Directive, error) {
 			break
 		}
 	}
+
+	// Unified registration for both Classic and CRUD
+	processor.RegisterGlobal("database", &db.Module{}, true)
 
 	if isCrud {
 		// Initialize as a CRUD protocol but register JS as "database"
@@ -80,12 +78,11 @@ func NewDatabaseDirective(c *DirectiveConfig) (Directive, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &DatabaseDirective{config: c, crud: &CrudProtocol{Inner: inner}}, nil
+		return &DatabaseDirective{config: c, crud: &CrudProtocol{Inner: inner}, Schemas: make(map[string]map[string]db.SchemaType)}, nil
 	}
 
 	// Classic DATABASE
-	processor.RegisterGlobal("database", &db.Module{}, true)
-	return &DatabaseDirective{config: c}, nil
+	return &DatabaseDirective{config: c, Schemas: make(map[string]map[string]db.SchemaType)}, nil
 }
 
 func (d *DatabaseDirective) Name() string    { return "DATABASE" }
@@ -131,7 +128,29 @@ func (d *DatabaseDirective) Close() error {
 // Start parses the database directives and registers the connection globally.
 func (d *DatabaseDirective) Start() ([]net.Listener, error) {
 	if d.crud != nil {
-		return d.crud.Start()
+		l, err := d.crud.Start()
+		if err != nil {
+			return nil, err
+		}
+		// For unified mode, we still want to populate d.Schemas and d.conn
+		// so that the classic DB API (used in tests and some JS) still works.
+		d.conn = db.GetConnection(d.config.Args.Get("name", d.crud.Inner.Config().Name))
+		if d.conn == nil && d.config.Args.Get("name") == "" {
+			// Try "DEFAULT" if no explicit name was given
+			d.conn = db.GetConnection(db.DefaultConnName)
+		}
+
+		for _, route := range d.config.Routes {
+			if route.Method == "SCHEMA" {
+				name := route.Path
+				if route.Routes == nil && !route.IsGroup {
+					r, _, _ := route.ParseHandlerAsRoutes()
+					route.Routes = []*RouteConfig{r}
+				}
+				d.parseSchema(d.conn, name, route.Routes)
+			}
+		}
+		return l, nil
 	}
 
 	dbURL := d.config.Address
@@ -176,6 +195,11 @@ func (d *DatabaseDirective) Start() ([]net.Listener, error) {
 		}
 	}
 
+	// Bulk migration for all models at once (resolves relationship ordering panics)
+	if err := conn.AutoMigrate(); err != nil {
+		return nil, fmt.Errorf("DATABASE failed to migrate: %v", err)
+	}
+
 	// Inject global proxy for JS instances
 	fmt.Printf("Injecting global proxy for JS instances: %s\n", query.Get("name"))
 	return nil, nil
@@ -183,13 +207,19 @@ func (d *DatabaseDirective) Start() ([]net.Listener, error) {
 
 // parseSchema parses the raw text content of a SCHEMA block.
 func (d *DatabaseDirective) parseSchema(conn *db.Connection, name string, routes []*RouteConfig) {
+	if d.Schemas == nil {
+		d.Schemas = make(map[string]map[string]db.SchemaType)
+	}
 	schemaMap := make(map[string]interface{})
 
 	var deferred []deferredItem
 
 	for _, route := range routes {
+		if route == nil {
+			continue
+		}
 		cmd := strings.ToUpper(route.Method)
-		code, _ := js.EnsureReturnStrict(strings.TrimSpace(route.Handler))
+		code, _ := processor.EnsureReturnStrict(strings.TrimSpace(route.Handler))
 		// Parse [key=value,...] args
 		args := ""
 		init := ""
@@ -211,65 +241,65 @@ func (d *DatabaseDirective) parseSchema(conn *db.Connection, name string, routes
 
 		switch cmd {
 		case "FIELD":
-				fieldName := route.Path
-				if route.Inline {
-					// virtual field (computed from inline code)
-					deferred = append(deferred, deferredItem{"VIRTUAL", fieldName, code, ""})
-				} else {
-					fType := fieldType(route)
-					fieldMap := map[string]interface{}{
-						"type": fType,
-					}
-
-					rawType := ""
-					if route.Handler != "" && !route.Inline {
-						rawType = strings.TrimSpace(route.Handler)
-					}
-					if route.ContentType != "" {
-						rawType = route.ContentType
-					}
-
-					refVal := route.Args.Get("ref")
-					if refVal == "" && strings.Contains(rawType, ".") {
-						refVal = rawType
-					}
-
-					if refVal != "" {
-						fieldMap["ref"] = refVal
-						fieldMap["type"] = "string" // Default type for the FK column
-
-						hasVal := route.Args.Get("has", "one")
-						if !slices.Contains([]string{"one", "many", "many2many", "many_to_many", "one_to_many", "one_to_one"}, hasVal) {
-							hasVal = "one"
-						}
-						if hasVal == "many_to_many" {
-							hasVal = "many2many"
-						} else if hasVal == "one_to_many" {
-							hasVal = "many"
-						} else if hasVal == "one_to_one" {
-							hasVal = "one"
-						}
-						fieldMap["has"] = hasVal
-						fieldMap["delete"] = strings.ToUpper(route.Args.Get("delete", "SET NULL"))
-						fieldMap["update"] = strings.ToUpper(route.Args.Get("update", "CASCADE"))
-					}
-
-					// Parse other [key=value,...] args
-					if len(route.Args) >= 0 {
-						for k, v := range route.Args {
-							if k == "type" || k == "has" || k == "ref" || k == "delete" || k == "update" {
-								continue
-							}
-							if isBool(v) {
-								fieldMap[k] = isTrue(v)
-							} else {
-								fieldMap[k] = v
-							}
-						}
-					}
-
-					schemaMap[fieldName] = fieldMap
+			fieldName := route.Path
+			if route.Inline {
+				// virtual field (computed from inline code)
+				deferred = append(deferred, deferredItem{"VIRTUAL", fieldName, code, ""})
+			} else {
+				fType := fieldType(route)
+				fieldMap := map[string]interface{}{
+					"type": fType,
 				}
+
+				rawType := ""
+				if route.Handler != "" && !route.Inline {
+					rawType = strings.TrimSpace(route.Handler)
+				}
+				if route.ContentType != "" {
+					rawType = route.ContentType
+				}
+
+				refVal := route.Args.Get("ref")
+				if refVal == "" && strings.Contains(rawType, ".") {
+					refVal = rawType
+				}
+
+				if refVal != "" {
+					fieldMap["ref"] = refVal
+					fieldMap["type"] = "string" // Default type for the FK column
+
+					hasVal := route.Args.Get("has", "one")
+					if !slices.Contains([]string{"one", "many", "many2many", "many_to_many", "one_to_many", "one_to_one"}, hasVal) {
+						hasVal = "one"
+					}
+					if hasVal == "many_to_many" {
+						hasVal = "many2many"
+					} else if hasVal == "one_to_many" {
+						hasVal = "many"
+					} else if hasVal == "one_to_one" {
+						hasVal = "one"
+					}
+					fieldMap["has"] = hasVal
+					fieldMap["delete"] = strings.ToUpper(route.Args.Get("delete", "SET NULL"))
+					fieldMap["update"] = strings.ToUpper(route.Args.Get("update", "CASCADE"))
+				}
+
+				// Parse other [key=value,...] args
+				if len(route.Args) >= 0 {
+					for k, v := range route.Args {
+						if k == "type" || k == "has" || k == "ref" || k == "delete" || k == "update" {
+							continue
+						}
+						if isBool(v) {
+							fieldMap[k] = isTrue(v)
+						} else {
+							fieldMap[k] = v
+						}
+					}
+				}
+
+				schemaMap[fieldName] = fieldMap
+			}
 		case "VIRTUAL":
 			deferred = append(deferred, deferredItem{"VIRTUAL", route.Path, code, ""})
 		case "HOOK":
@@ -286,7 +316,40 @@ func (d *DatabaseDirective) parseSchema(conn *db.Connection, name string, routes
 	}
 
 	// Phase 1: Create the Model with field schema (this creates the base schema)
-	m := conn.Model(name, schemaMap)
+	// We use CreateModel to skip individual migrations that causes panics with relationships
+	var m *db.Model
+	if conn != nil {
+		m = conn.CreateModel(name, schemaMap)
+	}
+
+	// Convert map to SchemaType for metadata storage
+	parsedSchema := make(map[string]db.SchemaType)
+	for k, v := range schemaMap {
+		if vm, ok := v.(map[string]interface{}); ok {
+			st := db.SchemaType{Type: "string"}
+			if t, ok := vm["type"].(string); ok {
+				st.Type = t
+			}
+			if r, ok := vm["ref"].(string); ok {
+				st.Ref = r
+			}
+			if h, ok := vm["has"].(string); ok {
+				st.Has = h
+			}
+			if d, ok := vm["delete"].(string); ok {
+				st.OnDelete = d
+			}
+			if u, ok := vm["update"].(string); ok {
+				st.OnUpdate = u
+			}
+			parsedSchema[k] = st
+		}
+	}
+	d.Schemas[name] = parsedSchema
+
+	if conn == nil || m == nil {
+		return
+	}
 
 	// Phase 2: Add methods, virtuals, statics, middleware to the existing schema
 	for _, item := range deferred {
@@ -301,7 +364,6 @@ func (d *DatabaseDirective) parseSchema(conn *db.Connection, name string, routes
 			m.AddStatic(item)
 		}
 	}
-
 }
 
 // Deferred items to add after conn.Model() creates the base schema
@@ -318,7 +380,7 @@ func (d deferredItem) GetCode() string {
 	if strings.Contains(d.code, "await ") {
 		async = "async "
 	}
-	c, _ := js.EnsureReturnStrict(d.code)
+	c, _ := processor.EnsureReturnStrict(d.code)
 	return fmt.Sprintf("%sfunction(%s) { with(this){ %s; } }", async, d.args, c)
 }
 

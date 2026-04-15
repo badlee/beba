@@ -3,6 +3,7 @@ package main
 import (
 	"http-server/plugins/config"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -84,7 +85,7 @@ func TestRunTemplateTest(t *testing.T) {
 			cfg.Stderr = "stderr.log"
 			cfg.Find = tt.find
 			cfg.Match = tt.match
-			err := runTemplateTest(tmpFile, cfg)
+			err := runTemplateTest(tmpFile, cfg, filepath.Dir(tmpFile))
 			if (err == nil) != tt.expected {
 				t.Errorf("expected success=%v, got err=%v", tt.expected, err)
 			}
@@ -102,7 +103,7 @@ func TestRunTemplateTest(t *testing.T) {
 	cfg.Stderr = "stderr.log"
 	cfg.Find = "h1"
 	cfg.Match = "/Hello/"
-	err = runTemplateTest(tmpFile, cfg)
+	err = runTemplateTest(tmpFile, cfg, filepath.Dir(tmpFile))
 	if err != nil {
 		t.Errorf("Failed with custom stdout: %v", err)
 	}

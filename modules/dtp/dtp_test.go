@@ -1,27 +1,27 @@
 package dtp
 
 import (
+	"http-server/processor"
 	"strings"
 	"testing"
-
-	"github.com/dop251/goja"
 )
 
 func TestDTPModuleLoader(t *testing.T) {
-	vm := goja.New()
-	
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
+
 	mod := &Module{}
 	exports := vm.NewObject()
 	moduleObj := vm.NewObject()
 	moduleObj.Set("exports", exports)
-	
-	mod.Loader(nil, vm, moduleObj)
-	
+
+	mod.Loader(nil, vm.Runtime, moduleObj)
+
 	vm.Set("dtp", exports)
 
 	// Since full DTP networking implies standing up limba/dtp mocks,
 	// we will basic-test the Javascript initialization parameter failures to ensure bindings exist.
-	
+
 	script := `
 		var errMessage = "";
 		try {
@@ -30,12 +30,12 @@ func TestDTPModuleLoader(t *testing.T) {
 			errMessage = e.message || e.toString();
 		}
 	`
-	
+
 	_, err := vm.RunString(script)
 	if err != nil {
 		t.Fatalf("JS Execution failed: %v", err)
 	}
-	
+
 	errMessage := vm.Get("errMessage")
 	if errMessage == nil || !strings.Contains(errMessage.String(), "requires at least 3 arguments") {
 		t.Fatalf("Expected initialization failure message, got: %v", errMessage)
@@ -43,15 +43,16 @@ func TestDTPModuleLoader(t *testing.T) {
 }
 
 func TestDTPModuleOfflineConnect(t *testing.T) {
-	vm := goja.New()
-	
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
+
 	mod := &Module{}
 	exports := vm.NewObject()
 	moduleObj := vm.NewObject()
 	moduleObj.Set("exports", exports)
-	
-	mod.Loader(nil, vm, moduleObj)
-	
+
+	mod.Loader(nil, vm.Runtime, moduleObj)
+
 	vm.Set("dtp", exports)
 
 	// Connect to dummy non-existent server to verify event hook routing
@@ -69,12 +70,12 @@ func TestDTPModuleOfflineConnect(t *testing.T) {
 			// Expecting failure
 		}
 	`
-	
+
 	_, err := vm.RunString(script)
 	if err != nil {
 		t.Fatalf("JS Execution failed: %v", err)
 	}
-	
+
 	errorFired := vm.Get("errorFired")
 	if errorFired == nil || errorFired.Export() != true {
 		t.Fatalf("Expected error hook to fire on bogus connection")

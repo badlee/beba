@@ -1,16 +1,16 @@
 package fs
 
 import (
+	"http-server/processor"
 	"path/filepath"
 	"testing"
-
-	"github.com/dop251/goja"
 )
 
 func TestFSSyncMethods(t *testing.T) {
-	vm := goja.New()
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
 	mod := &Module{}
-	mod.Loader(nil, vm, vm.NewObject())
+	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	tmpDir := t.TempDir()
 	vm.Set("TEST_DIR", filepath.ToSlash(tmpDir))
@@ -45,9 +45,10 @@ func TestFSSyncMethods(t *testing.T) {
 }
 
 func TestFSAsyncMethods(t *testing.T) {
-	vm := goja.New()
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
 	mod := &Module{}
-	mod.Loader(nil, vm, vm.NewObject())
+	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	tmpDir := t.TempDir()
 	vm.Set("TEST_DIR", filepath.ToSlash(tmpDir))
@@ -81,9 +82,10 @@ func TestFSAsyncMethods(t *testing.T) {
 }
 
 func TestFSReadFileNotFound(t *testing.T) {
-	vm := goja.New()
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
 	mod := &Module{}
-	mod.Loader(nil, vm, vm.NewObject())
+	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	// Sync read of non-existent file should panic (caught by JS try/catch)
 	_, err := vm.RunString(`
@@ -101,9 +103,10 @@ func TestFSReadFileNotFound(t *testing.T) {
 }
 
 func TestFSWriteFileError(t *testing.T) {
-	vm := goja.New()
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
 	mod := &Module{}
-	mod.Loader(nil, vm, vm.NewObject())
+	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	_, err := vm.RunString(`
 		var caught = false;
@@ -120,9 +123,10 @@ func TestFSWriteFileError(t *testing.T) {
 }
 
 func TestFSAppendFileCreatesNew(t *testing.T) {
-	vm := goja.New()
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
 	mod := &Module{}
-	mod.Loader(nil, vm, vm.NewObject())
+	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	tmpDir := t.TempDir()
 	vm.Set("TEST_DIR", filepath.ToSlash(tmpDir))
@@ -139,9 +143,10 @@ func TestFSAppendFileCreatesNew(t *testing.T) {
 }
 
 func TestFSStatError(t *testing.T) {
-	vm := goja.New()
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
 	mod := &Module{}
-	mod.Loader(nil, vm, vm.NewObject())
+	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	_, err := vm.RunString(`
 		var caught = false;
@@ -158,9 +163,10 @@ func TestFSStatError(t *testing.T) {
 }
 
 func TestFSReaddirError(t *testing.T) {
-	vm := goja.New()
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
 	mod := &Module{}
-	mod.Loader(nil, vm, vm.NewObject())
+	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	_, err := vm.RunString(`
 		var caught = false;
@@ -177,9 +183,10 @@ func TestFSReaddirError(t *testing.T) {
 }
 
 func TestFSMkdirError(t *testing.T) {
-	vm := goja.New()
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
 	mod := &Module{}
-	mod.Loader(nil, vm, vm.NewObject())
+	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	_, err := vm.RunString(`
 		var caught = false;
@@ -196,9 +203,10 @@ func TestFSMkdirError(t *testing.T) {
 }
 
 func TestFSMkdirRecursive(t *testing.T) {
-	vm := goja.New()
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
 	mod := &Module{}
-	mod.Loader(nil, vm, vm.NewObject())
+	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	tmpDir := t.TempDir()
 	vm.Set("TEST_DIR", filepath.ToSlash(tmpDir))
@@ -213,9 +221,10 @@ func TestFSMkdirRecursive(t *testing.T) {
 }
 
 func TestFSUnlinkError(t *testing.T) {
-	vm := goja.New()
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
 	mod := &Module{}
-	mod.Loader(nil, vm, vm.NewObject())
+	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	_, err := vm.RunString(`
 		var caught = false;
@@ -232,9 +241,10 @@ func TestFSUnlinkError(t *testing.T) {
 }
 
 func TestFSExistsFalse(t *testing.T) {
-	vm := goja.New()
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
 	mod := &Module{}
-	mod.Loader(nil, vm, vm.NewObject())
+	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	_, err := vm.RunString(`
 		if (fs.existsSync("/this/does/not/exist")) throw new Error("Should return false");
@@ -245,9 +255,10 @@ func TestFSExistsFalse(t *testing.T) {
 }
 
 func TestFSAsyncReject(t *testing.T) {
-	vm := goja.New()
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
 	mod := &Module{}
-	mod.Loader(nil, vm, vm.NewObject())
+	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	_, err := vm.RunString(`
 		var rejected = false;
@@ -265,9 +276,10 @@ func TestFSAsyncReject(t *testing.T) {
 }
 
 func TestFSStatProperties(t *testing.T) {
-	vm := goja.New()
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
 	mod := &Module{}
-	mod.Loader(nil, vm, vm.NewObject())
+	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	tmpDir := t.TempDir()
 	vm.Set("TEST_DIR", filepath.ToSlash(tmpDir))

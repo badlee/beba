@@ -27,7 +27,7 @@ func (d *Document) Save() error {
 
 	// Remplir l'instance avec les données
 	for fieldName, value := range d.Data {
-		goFieldName := toCamelCase(fieldName)
+		goFieldName := ToCamelCase(fieldName)
 		field := instance.FieldByName(goFieldName)
 		if field.IsValid() && field.CanSet() {
 			// Handle array serialization

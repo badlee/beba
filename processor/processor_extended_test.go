@@ -12,54 +12,54 @@ import (
 )
 
 // --------------------------------------------------------------------------
-// exportRecursive()
+// Export()
 // --------------------------------------------------------------------------
 
-func TestExportRecursive_Null(t *testing.T) {
-	vm := goja.New()
-	result := exportRecursive(vm, goja.Null())
+func TestExport_Null(t *testing.T) {
+	vm := New("/tmp", nil, newTestConfig())
+	result := vm.Export(goja.Null())
 	if result != nil {
 		t.Errorf("expected nil for null, got %v", result)
 	}
 }
 
-func TestExportRecursive_Undefined(t *testing.T) {
-	vm := goja.New()
-	result := exportRecursive(vm, goja.Undefined())
+func TestExport_Undefined(t *testing.T) {
+	vm := New("/tmp", nil, newTestConfig())
+	result := vm.Export(goja.Undefined())
 	if result != nil {
 		t.Errorf("expected nil for undefined, got %v", result)
 	}
 }
 
-func TestExportRecursive_NilVM(t *testing.T) {
-	result := exportRecursive(nil, nil)
+func TestExport_NilVM(t *testing.T) {
+	result := NewEmpty().Export(nil)
 	if result != nil {
 		t.Errorf("expected nil for nil VM, got %v", result)
 	}
 }
 
-func TestExportRecursive_String(t *testing.T) {
-	vm := goja.New()
+func TestExport_String(t *testing.T) {
+	vm := New("/tmp", nil, newTestConfig())
 	val, _ := vm.RunString(`"hello"`)
-	result := exportRecursive(vm, val)
+	result := vm.Export(val)
 	if result != "hello" {
 		t.Errorf("expected 'hello', got %v", result)
 	}
 }
 
-func TestExportRecursive_Number(t *testing.T) {
-	vm := goja.New()
+func TestExport_Number(t *testing.T) {
+	vm := New("/tmp", nil, newTestConfig())
 	val, _ := vm.RunString(`42`)
-	result := exportRecursive(vm, val)
+	result := vm.Export(val)
 	if result != float64(42) {
 		t.Errorf("expected 42, got %v (%T)", result, result)
 	}
 }
 
-func TestExportRecursive_Object(t *testing.T) {
-	vm := goja.New()
+func TestExport_Object(t *testing.T) {
+	vm := New("/tmp", nil, newTestConfig())
 	val, _ := vm.RunString(`({name: "Alice", age: 30})`)
-	result := exportRecursive(vm, val)
+	result := vm.Export(val)
 	m, ok := result.(map[string]interface{})
 	if !ok {
 		t.Fatalf("expected map, got %T", result)
@@ -69,10 +69,10 @@ func TestExportRecursive_Object(t *testing.T) {
 	}
 }
 
-func TestExportRecursive_Array(t *testing.T) {
-	vm := goja.New()
+func TestExport_Array(t *testing.T) {
+	vm := New("/tmp", nil, newTestConfig())
 	val, _ := vm.RunString(`[1, 2, 3]`)
-	result := exportRecursive(vm, val)
+	result := vm.Export(val)
 	arr, ok := result.([]interface{})
 	if !ok {
 		t.Fatalf("expected []interface{}, got %T", result)
@@ -82,11 +82,11 @@ func TestExportRecursive_Array(t *testing.T) {
 	}
 }
 
-func TestExportRecursive_Function(t *testing.T) {
-	vm := goja.New()
+func TestExport_Function(t *testing.T) {
+	vm := New("/tmp", nil, newTestConfig())
 	val, _ := vm.RunString(`(function() { return 1; })`)
 	// Functions can't be JSON.stringified — should fall through gracefully
-	result := exportRecursive(vm, val)
+	result := vm.Export(val)
 	if result != nil {
 		// Undefined from JSON.stringify means nil return
 		// But function export could return something — just check no panic
@@ -123,8 +123,8 @@ func TestInjectHTMX_InjectHTML(t *testing.T) {
 
 func TestInjectHTMX_NoHead_InjectsInBody(t *testing.T) {
 	cfg := &config.AppConfig{
-		NoHtmx:     false,
-		HtmxURL:    "https://cdn.example.com/htmx.js",
+		NoHtmx:  false,
+		HtmxURL: "https://cdn.example.com/htmx.js",
 	}
 	// HTML without explicit head tag — goquery will auto-create one
 	html := `<!DOCTYPE html><html><body>content</body></html>`
@@ -150,8 +150,8 @@ func TestAttachGlobals_InjectsRegistered(t *testing.T) {
 	tc := &TestConfig{Value: "hello"}
 	RegisterGlobal("TestCfg", &SharedObject{name: "TestCfg", data: tc})
 
-	vm := goja.New()
-	AttachGlobals(vm)
+	vm := NewEmpty()
+	vm.AttachGlobals()
 
 	val, err := vm.RunString(`typeof testCfg !== "undefined"`)
 	if err != nil {
@@ -258,7 +258,7 @@ func TestProcessFile_ScriptServerMissingSrc(t *testing.T) {
 
 func TestExecuteJS_EmptyInput(t *testing.T) {
 	vm := New("/tmp", nil, newTestConfig())
-	result, err := executeJS(vm, "", "/tmp")
+	result, err := vm.ExecuteJS("", "/tmp")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -269,7 +269,7 @@ func TestExecuteJS_EmptyInput(t *testing.T) {
 
 func TestExecuteJS_NoTags(t *testing.T) {
 	vm := New("/tmp", nil, newTestConfig())
-	result, err := executeJS(vm, "plain text no tags", "/tmp")
+	result, err := vm.ExecuteJS("plain text no tags", "/tmp")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -280,7 +280,7 @@ func TestExecuteJS_NoTags(t *testing.T) {
 
 func TestExecuteJS_InlineExpressionError(t *testing.T) {
 	vm := New("/tmp", nil, newTestConfig())
-	_, err := executeJS(vm, `<?= unknownVar.prop ?>`, "/tmp")
+	_, err := vm.ExecuteJS(`<?= unknownVar.prop ?>`, "/tmp")
 	if err == nil {
 		t.Error("expected error for accessing undefined variable property")
 	}
@@ -288,7 +288,7 @@ func TestExecuteJS_InlineExpressionError(t *testing.T) {
 
 func TestExecuteJS_MixedContent(t *testing.T) {
 	vm := New("/tmp", nil, newTestConfig())
-	result, err := executeJS(vm, `Before <?= 1+2 ?> Middle <?js var x = "done"; ?> After`, "/tmp")
+	result, err := vm.ExecuteJS(`Before <?= 1+2 ?> Middle <?js var x = "done"; ?> After`, "/tmp")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

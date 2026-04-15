@@ -1,6 +1,7 @@
 package db
 
 import (
+	"http-server/processor"
 	"net/url"
 	"strings"
 	"testing"
@@ -130,20 +131,22 @@ func TestDBModuleToJSObject(t *testing.T) {
 	defer conn.Close()
 
 	mod := &Module{}
-	vm := goja.New()
-	obj := mod.ToJSObject(vm)
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
+	obj := mod.ToJSObject(vm.Runtime)
 	if obj == nil || goja.IsUndefined(obj) {
 		t.Fatal("Expected non-nil JS object")
 	}
 }
 
 func TestDBModuleLoader_ConnectMemory(t *testing.T) {
-	vm := goja.New()
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
 	mod := &Module{}
 	moduleObj := vm.NewObject()
 	exports := vm.NewObject()
 	moduleObj.Set("exports", exports)
-	mod.Loader(nil, vm, moduleObj)
+	mod.Loader(nil, vm.Runtime, moduleObj)
 
 	// connect should be a function on exports
 	val := exports.Get("connect")
@@ -157,12 +160,13 @@ func TestDBModuleLoader_HasConnection(t *testing.T) {
 	conn := NewConnection(db, "test-has")
 	defer conn.Close()
 
-	vm := goja.New()
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
 	mod := &Module{}
 	moduleObj := vm.NewObject()
 	exports := vm.NewObject()
 	moduleObj.Set("exports", exports)
-	mod.Loader(nil, vm, moduleObj)
+	mod.Loader(nil, vm.Runtime, moduleObj)
 
 	vm.Set("db", exports)
 	val, err := vm.RunString(`db.hasConnection("test-has")`)
@@ -179,12 +183,13 @@ func TestDBModuleLoader_ConnectionNames(t *testing.T) {
 	conn := NewConnection(db, "names-test")
 	defer conn.Close()
 
-	vm := goja.New()
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
 	mod := &Module{}
 	moduleObj := vm.NewObject()
 	exports := vm.NewObject()
 	moduleObj.Set("exports", exports)
-	mod.Loader(nil, vm, moduleObj)
+	mod.Loader(nil, vm.Runtime, moduleObj)
 
 	vm.Set("db", exports)
 	val, err := vm.RunString(`db.connectionNames().length`)
@@ -201,12 +206,13 @@ func TestDBModule_Model_CRUD(t *testing.T) {
 	conn := NewConnection(db)
 	defer conn.Close()
 
-	vm := goja.New()
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
 	mod := &Module{}
 	moduleObj := vm.NewObject()
 	exports := vm.NewObject()
 	moduleObj.Set("exports", exports)
-	mod.Loader(nil, vm, moduleObj)
+	mod.Loader(nil, vm.Runtime, moduleObj)
 	vm.Set("db", exports)
 
 	_, err := vm.RunString(`

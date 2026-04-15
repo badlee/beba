@@ -18,7 +18,7 @@ func TestHasOneRelationship(t *testing.T) {
 			"name": {Type: "string"},
 		},
 	}
-	_ = conn.Model("User", userSchema)
+	_ = conn.CreateModel("User", userSchema)
 
 	profileSchema := &Schema{
 		Paths: map[string]SchemaType{
@@ -26,7 +26,13 @@ func TestHasOneRelationship(t *testing.T) {
 			"bio":     {Type: "string"},
 		},
 	}
-	profileModel := conn.Model("Profile", profileSchema)
+	profileModel := conn.CreateModel("Profile", profileSchema)
+
+	// Trigger bulk migration
+	err := conn.AutoMigrate()
+	if err != nil {
+		t.Fatalf("Bulk AutoMigrate failed: %v", err)
+	}
 
 	// Verify Profile Struct
 	structType := profileModel.createStructType()
@@ -43,12 +49,6 @@ func TestHasOneRelationship(t *testing.T) {
 		if !strings.Contains(tag, "foreignKey:UserID") || !strings.Contains(tag, "references:ID") {
 			t.Errorf("UserRef tag missing expected GORM association info: %s", tag)
 		}
-	}
-
-	// Verify AutoMigrate
-	err := db.AutoMigrate(reflect.New(structType).Interface())
-	if err != nil {
-		t.Fatalf("AutoMigrate failed for Profile: %v", err)
 	}
 }
 
@@ -181,9 +181,9 @@ func TestRelationshipPreload(t *testing.T) {
 
 	// Seed Data
 	user := map[string]interface{}{"id": "u1", "name": "Alice"}
-	db.Table("users").Create(user)
+	db.Table("User").Create(user)
 	profile := map[string]interface{}{"id": "p1", "user_id": "u1", "bio": "Hello"}
-	db.Table("profiles").Create(profile)
+	db.Table("Profile").Create(profile)
 
 	// Test Preload
 	query := NewQuery(conn.Model("Profile", profileSchema), nil)

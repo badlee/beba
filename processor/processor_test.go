@@ -21,7 +21,7 @@ func newTestConfig() *config.AppConfig {
 // --------------------------------------------------------------------------
 
 func TestNew_BasicJSExecution(t *testing.T) {
-	vm := New("/tmp", nil, newTestConfig())
+	vm := NewEmpty()
 	val, err := vm.RunString(`1 + 1`)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -32,7 +32,7 @@ func TestNew_BasicJSExecution(t *testing.T) {
 }
 
 func TestNew_PrintCapture(t *testing.T) {
-	vm := New("/tmp", nil, newTestConfig())
+	vm := NewEmpty()
 	_, err := vm.RunString(`print("hello world")`)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -60,7 +60,7 @@ func TestNew_ProcessEnv(t *testing.T) {
 	os.Setenv("TEST_PROC_KEY", "test_proc_value")
 	defer os.Unsetenv("TEST_PROC_KEY")
 
-	vm := New("/tmp", nil, newTestConfig())
+	vm := NewEmpty()
 	val, err := vm.RunString(`process.env["TEST_PROC_KEY"]`)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -229,8 +229,8 @@ func TestProcessFile_ScriptServerSrcTag(t *testing.T) {
 // --------------------------------------------------------------------------
 
 func TestExecuteJS_InlineExpression(t *testing.T) {
-	vm := New("/tmp", nil, newTestConfig())
-	result, err := executeJS(vm, `<?= "inline" ?>`, "/tmp")
+	vm := NewEmpty()
+	result, err := vm.ExecuteJS(`<?= "inline" ?>`, "/tmp")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -240,8 +240,8 @@ func TestExecuteJS_InlineExpression(t *testing.T) {
 }
 
 func TestExecuteJS_SetsVariable(t *testing.T) {
-	vm := New("/tmp", nil, newTestConfig())
-	result, err := executeJS(vm, `<?js var x = 99; ?>Value: {{x}}`, "/tmp")
+	vm := NewEmpty()
+	result, err := vm.ExecuteJS(`<?js var x = 99; ?>Value: {{x}}`, "/tmp")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -16,6 +16,12 @@ Filtering begins at the socket acceptance level (TCP) or packet level (UDP), bef
 *   **Precision Geo-Fencing**: Block by country (ISO) or exact zones via GeoJSON.
     *   Directive: `GEOJSON [name] [file]` + `CONNECTION ALLOW [name]`
 *   **Programmable Hooks**: Custom JavaScript for IP-level (`CONNECTION IP`) and Geo-level (`CONNECTION GEO`) filtering.
+    *   Example: `CONNECTION IP BEGIN if(CONN.ip === '1.2.3.4') reject('Blocked'); END CONNECTION`
+
+---
+
+## 🏗️ Protocol Unified Security
+Since the **Sentinel** layer operates at the socket level, all protocols (HTTP, MQTT, DTP) share the same protection. Even if a protocol is multiplexed on a single port, the security block configured for that port (or the `default` baseline) is applied before the protocol handlers are summoned.
 
 ### Layer 2: Protocol Hardening (HTTP/DTP/MQTT)
 Strict validation of protocol characteristics and resource usage.

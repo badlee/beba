@@ -892,7 +892,7 @@ func (p *customProvider) execute(kind paymentOpKind, req PaymentRequest) (Paymen
 	}
 
 	vm := processor.New(op.baseDir, nil, nil)
-	setPaymentVar(vm, req)
+	setPaymentVar(vm.Runtime, req)
 
 	// Build headers / body / query
 	headers := make(map[string]string)
@@ -900,17 +900,17 @@ func (p *customProvider) execute(kind paymentOpKind, req PaymentRequest) (Paymen
 	query := make(map[string]string)
 
 	for i := range op.headerRoutes {
-		if err := op.headerRoutes[i].eval(headers, vm); err != nil {
+		if err := op.headerRoutes[i].eval(headers, vm.Runtime); err != nil {
 			return PaymentResult{}, fmt.Errorf("HEADER: %w", err)
 		}
 	}
 	for i := range op.bodyRoutes {
-		if err := op.bodyRoutes[i].eval(body, vm); err != nil {
+		if err := op.bodyRoutes[i].eval(body, vm.Runtime); err != nil {
 			return PaymentResult{}, fmt.Errorf("BODY: %w", err)
 		}
 	}
 	for i := range op.queryRoutes {
-		if err := op.queryRoutes[i].eval(query, vm); err != nil {
+		if err := op.queryRoutes[i].eval(query, vm.Runtime); err != nil {
 			return PaymentResult{}, fmt.Errorf("QUERY: %w", err)
 		}
 	}

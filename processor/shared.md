@@ -347,9 +347,10 @@ Attache une valeur Go à **une seule VM** sans modifier le registre global.
 Les autres VMs créées ultérieurement ne verront pas cette valeur.
 
 ```go
+vm := processor.NewVM()
 // Utile pour des données spécifiques à une requête ou une goroutine
-processor.Register(vm, "Request", &reqData)
-processor.Register(vm, "Session", &session)
+processor.Register(vm.Runtime, "Request", &reqData)
+processor.Register(vm.Runtime, "Session", &session)
 ```
 
 ### `AttachGlobals(vm *goja.Runtime)`
@@ -357,8 +358,8 @@ processor.Register(vm, "Session", &session)
 Installe tous les SharedObjects du registre global dans la VM.
 
 ```go
-vm := goja.New()
-processor.AttachGlobals(vm)
+vm := processor.NewVM()
+processor.AttachGlobals(vm.Runtime)
 // puis vm.RunString(...)
 ```
 

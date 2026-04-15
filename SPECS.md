@@ -156,8 +156,12 @@ AUTH USER "admin" "{SHA256}K7gNU3sdo+OL0wNhqoVWhr3g6s1xYv72ol/pe/Unols="
 ### 6. Documentation IA-Friendly
 - [x] Rédaction d'une documentation technique structurée pour les agents IA.
 - [x] Création de guides d'exemples clairs.
-- [ ] Ajout de descriptions détaillées pour les URLs.
-- [ ] Support du protocole MCP (Model Context Protocol).
+- [x] Ajout de descriptions détaillées pour les URLs.
+- [x] Support du protocole MCP (Model Context Protocol) via injection de schémas.
+- [x] **[Technique]** Stratégie de migration "Dual Struct" : séparation des schémas de migration et des modèles de runtime pour éviter les panics GORM.
+- [x] **[Technique]** Migration en bloc (Bulk Migration) : résolution automatique des dépendances de clés étrangères.
+- [x] **[Technique]** Support complet des relations (`has=one`, `many`, `many2many`) et contraintes (`OnDelete`, `OnUpdate`) dans le DSL `SCHEMA`.
+- [x] **[Technique]** Unification des protocoles `DATABASE` et `CRUD`.
 
 ### 7. Site Web du Projet
 - [ ] Création d'un nom de domaine en `.js`
@@ -191,4 +195,4 @@ Voici la liste des fichiers de documentation et leur utilité :
 - [doc/PAYMENT.md](doc/PAYMENT.md) : Module de paiement (Stripe, MoMo, providers custom).
 
 ---
-*Dernière mise à jour : 8 Avril 2026*
+*Dernière mise à jour : 15 Avril 2026*

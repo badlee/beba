@@ -3,7 +3,10 @@ package httpserver
 import (
 	"errors"
 	"fmt"
+	"http-server/processor"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -107,7 +110,7 @@ func (cs *ConnectionSecurity) Accept(conn net.Conn) error {
 	host, port, _ := net.SplitHostPort(conn.RemoteAddr().String())
 	ip := net.ParseIP(host)
 	if ip == nil {
-		return nil 
+		return nil
 	}
 
 	// 1. Rate Limiting Check
@@ -217,7 +220,20 @@ func (cs *ConnectionSecurity) Accept(conn net.Conn) error {
 			if prg == nil {
 				continue
 			}
-			vm := goja.New()
+			var vm *processor.Processor
+			if !hook.Inline {
+				file, err := os.Stat(hook.Handler)
+				if err != nil {
+					return fmt.Errorf("security hook: %s is not exists", hook.Handler)
+				}
+				if file.IsDir() {
+					return fmt.Errorf("security hook: %s is a directory", hook.Handler)
+				}
+				vm = processor.New(filepath.Dir(hook.Handler), nil)
+			} else {
+				vm = processor.NewVM()
+			}
+			vm.AttachGlobals()
 
 			rejected := false
 			rejectMsg := "rejected by hook"

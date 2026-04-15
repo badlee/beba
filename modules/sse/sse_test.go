@@ -2,6 +2,7 @@ package sse
 
 import (
 	"context"
+	"http-server/processor"
 	"testing"
 	"time"
 
@@ -13,8 +14,9 @@ import (
 
 // TestPublishGlobal vérifie que publish() diffuse à tous les abonnés du channel "global".
 func TestPublishGlobal(t *testing.T) {
-	vm := goja.New()
-	sse := sseObj(t, vm, map[string]string{"sid": "s1"})
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
+	sse := sseObj(t, vm.Runtime, map[string]string{"sid": "s1"})
 
 	ch1 := newTestClient(t, "s1", []string{"global", "sid:s1"})
 	ch2 := newTestClient(t, "s2", []string{"global", "sid:s2"})
@@ -22,7 +24,7 @@ func TestPublishGlobal(t *testing.T) {
 	// Laisser les subscribe se propager dans les goroutines des shards
 	time.Sleep(10 * time.Millisecond)
 
-	callJS(t, vm, sse, "publish", "evt", "hello_global")
+	callJS(t, vm.Runtime, sse, "publish", "evt", "hello_global")
 
 	msg1 := recv(t, ch1, "client1 global")
 	if msg1.Data != "hello_global" {
@@ -37,17 +39,18 @@ func TestPublishGlobal(t *testing.T) {
 
 // TestSendIsolation vérifie que send() ne délivre le message qu'au client ciblé par son sid.
 func TestSendIsolation(t *testing.T) {
-	vm := goja.New()
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
 
 	// fiberMockCtx satisfait fiber.Ctx → isFiberCtx = true dans Loader
 	var _ fiber.Ctx = (*fiberMockCtx)(nil)
 	mock := newFiberMock(map[string]string{"sid": "target"})
 	mod := &Module{}
 	export := vm.NewObject()
-	mod.Loader(mock, vm, export)
+	mod.Loader(mock, vm.Runtime, export)
 	var sse *goja.Object
 	if exp := export.Get("exports"); exp != nil && !goja.IsUndefined(exp) {
-		sse = exp.ToObject(vm)
+		sse = exp.ToObject(vm.Runtime)
 	} else {
 		sse = export
 	}
@@ -59,8 +62,8 @@ func TestSendIsolation(t *testing.T) {
 
 	// attach("target") → mock.Locals("sse_sid", "target")
 	// send("evt","private") → Publish sur "sid:target"
-	callJS(t, vm, sse, "attach", "target")
-	callJS(t, vm, sse, "send", "evt", "private")
+	callJS(t, vm.Runtime, sse, "attach", "target")
+	callJS(t, vm.Runtime, sse, "send", "evt", "private")
 
 	msg := recv(t, chTarget, "target reçoit")
 	if msg.Data != "private" {
@@ -71,8 +74,9 @@ func TestSendIsolation(t *testing.T) {
 
 // TestToPublish vérifie que to(channel).publish() cible un channel nommé.
 func TestToPublish(t *testing.T) {
-	vm := goja.New()
-	sse := sseObj(t, vm, nil)
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
+	sse := sseObj(t, vm.Runtime, nil)
 
 	chNews := newTestClient(t, "reader", []string{"news"})
 	chOther := newTestClient(t, "other", []string{"global", "sid:other"})
@@ -89,7 +93,7 @@ func TestToPublish(t *testing.T) {
 	if err != nil {
 		t.Fatalf("to(): %v", err)
 	}
-	callJS(t, vm, result.(*goja.Object), "publish", "evt", "news_item")
+	callJS(t, vm.Runtime, result.(*goja.Object), "publish", "evt", "news_item")
 
 	msg := recv(t, chNews, "news subscriber")
 	if msg.Data != "news_item" {

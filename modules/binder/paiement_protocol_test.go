@@ -1330,5 +1330,5 @@ func routesOfMethod(routes []*RouteConfig, method string) []*RouteConfig {
 func newTestVM(t *testing.T) *goja.Runtime {
 	t.Helper()
 	vm := processor.New(t.TempDir(), nil, nil)
-	return vm
+	return vm.Runtime
 }

@@ -266,7 +266,7 @@ func (s *Module) Loader(_ any, vm *goja.Runtime, moduleObject *goja.Object) {
 		if HasDefaultConnection() {
 			globalConn := GetDefaultConnection()
 			model := globalConn.Model(name, schema)
-			return globalConn.createModelProxy(vm, model)
+			return globalConn.createModelProxy(model)
 		}
 		vm.Interrupt(vm.NewGoError(fmt.Errorf("no default connection found")))
 		return goja.Undefined()

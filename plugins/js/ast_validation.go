@@ -59,7 +59,7 @@ func EnsureReturnStrict(src string) (string, bool) {
 	}
 
 	// ❌ refuse si return déjà présent
-	if ContainsReturn(prg) {
+	if containsReturn(prg) {
 		return src, false
 	}
 
@@ -114,7 +114,7 @@ func EnsureReturnStrict(src string) (string, bool) {
 	return before + "return " + exprStr + after, true
 }
 
-// ContainsReturn parcourt récursivement un nœud AST Goja et détermine
+// containsReturn parcourt récursivement un nœud AST Goja et détermine
 // si un `ReturnStatement` est présent dans ce code.
 //
 // Contrairement à `go/ast`, Goja n’a pas de Visitor pattern,
@@ -143,19 +143,19 @@ func EnsureReturnStrict(src string) (string, bool) {
 //	if containsReturn(prg) {
 //	    fmt.Println("Return trouvé dans l'AST")
 //	}
-func ContainsReturn(node ast.Node) bool {
+func containsReturn(node ast.Node) bool {
 	switch n := node.(type) {
 
 	case *ast.Program:
 		for _, stmt := range n.Body {
-			if ContainsReturn(stmt) {
+			if containsReturn(stmt) {
 				return true
 			}
 		}
 
 	case *ast.BlockStatement:
 		for _, stmt := range n.List {
-			if ContainsReturn(stmt) {
+			if containsReturn(stmt) {
 				return true
 			}
 		}
@@ -164,90 +164,90 @@ func ContainsReturn(node ast.Node) bool {
 		return true
 
 	case *ast.IfStatement:
-		if ContainsReturn(n.Consequent) {
+		if containsReturn(n.Consequent) {
 			return true
 		}
-		if n.Alternate != nil && ContainsReturn(n.Alternate) {
+		if n.Alternate != nil && containsReturn(n.Alternate) {
 			return true
 		}
 
 	case *ast.ExpressionStatement:
-		return ContainsReturn(n.Expression)
+		return containsReturn(n.Expression)
 
 	case *ast.CallExpression:
-		if ContainsReturn(n.Callee) {
+		if containsReturn(n.Callee) {
 			return true
 		}
 		for _, arg := range n.ArgumentList {
-			if ContainsReturn(arg) {
+			if containsReturn(arg) {
 				return true
 			}
 		}
 
 	case *ast.FunctionLiteral:
-		return ContainsReturn(n.Body)
+		return containsReturn(n.Body)
 
 	case *ast.ArrowFunctionLiteral:
-		return ContainsReturn(n.Body)
+		return containsReturn(n.Body)
 
 	case *ast.FunctionDeclaration:
-		return ContainsReturn(n.Function)
+		return containsReturn(n.Function)
 
 	case *ast.DoWhileStatement:
-		return ContainsReturn(n.Test) || ContainsReturn(n.Body)
+		return containsReturn(n.Test) || containsReturn(n.Body)
 
 	case *ast.WhileStatement:
-		return ContainsReturn(n.Test) || ContainsReturn(n.Body)
+		return containsReturn(n.Test) || containsReturn(n.Body)
 
 	case *ast.ForStatement:
-		if n.Initializer != nil && ContainsReturn(n.Initializer) {
+		if n.Initializer != nil && containsReturn(n.Initializer) {
 			return true
 		}
-		if n.Test != nil && ContainsReturn(n.Test) {
+		if n.Test != nil && containsReturn(n.Test) {
 			return true
 		}
-		if n.Update != nil && ContainsReturn(n.Update) {
+		if n.Update != nil && containsReturn(n.Update) {
 			return true
 		}
-		return ContainsReturn(n.Body)
+		return containsReturn(n.Body)
 
 	case *ast.ForInStatement:
-		return ContainsReturn(n.Into) || ContainsReturn(n.Source) || ContainsReturn(n.Body)
+		return containsReturn(n.Into) || containsReturn(n.Source) || containsReturn(n.Body)
 
 	case *ast.ForOfStatement:
-		return ContainsReturn(n.Into) || ContainsReturn(n.Source) || ContainsReturn(n.Body)
+		return containsReturn(n.Into) || containsReturn(n.Source) || containsReturn(n.Body)
 
 	case *ast.SwitchStatement:
-		if ContainsReturn(n.Discriminant) {
+		if containsReturn(n.Discriminant) {
 			return true
 		}
 		for _, c := range n.Body {
 			for _, stmt := range c.Consequent {
-				if ContainsReturn(stmt) {
+				if containsReturn(stmt) {
 					return true
 				}
 			}
 		}
 
 	case *ast.TryStatement:
-		if ContainsReturn(n.Body) {
+		if containsReturn(n.Body) {
 			return true
 		}
-		if n.Catch != nil && ContainsReturn(n.Catch) {
+		if n.Catch != nil && containsReturn(n.Catch) {
 			return true
 		}
-		if n.Finally != nil && ContainsReturn(n.Finally) {
+		if n.Finally != nil && containsReturn(n.Finally) {
 			return true
 		}
 
 	case *ast.CatchStatement:
-		return ContainsReturn(n.Body)
+		return containsReturn(n.Body)
 
 	case *ast.LabelledStatement:
-		return ContainsReturn(n.Statement)
+		return containsReturn(n.Statement)
 
 	case *ast.WithStatement:
-		return ContainsReturn(n.Object) || ContainsReturn(n.Body)
+		return containsReturn(n.Object) || containsReturn(n.Body)
 
 	}
 

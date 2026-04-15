@@ -282,7 +282,7 @@ func (f *mailFromRoute) resolve(msg *MailMessage) (string, error) {
 
 	// JS (file or inline) — use processor.New so all built-in modules are available
 	vm := processor.New(f.baseDir, nil, nil)
-	setEmailVar(vm, msg, false) // pre-template: content may be empty
+	setEmailVar(vm.Runtime, msg, false) // pre-template: content may be empty
 
 	argsObj := vm.NewObject()
 	for k, v := range r.Args {
@@ -290,7 +290,7 @@ func (f *mailFromRoute) resolve(msg *MailMessage) (string, error) {
 	}
 	vm.Set("args", argsObj)
 
-	val, err := f.runScript(vm)
+	val, err := f.runScript(vm.Runtime)
 	if err != nil {
 		return "", fmt.Errorf("mail FROM script error: %w", err)
 	}
@@ -334,7 +334,7 @@ func (p *mailProcessor) run(msg *MailMessage, req *mailRequest) error {
 
 	// email variable
 	isPre := p.phase == mailPre
-	emailObj := setEmailVar(vm, msg, isPre)
+	emailObj := setEmailVar(vm.Runtime, msg, isPre)
 
 	// request variable (may be nil for SMTP/SG/etc.)
 	if req != nil {
@@ -373,7 +373,7 @@ func (p *mailProcessor) run(msg *MailMessage, req *mailRequest) error {
 	vm.Set("reject", func(reason string) { rejected = reason })
 	vm.Set("done", func() {})
 
-	if _, err := p.runScript(vm); err != nil {
+	if _, err := p.runScript(vm.Runtime); err != nil {
 		return fmt.Errorf("mail PROCESSOR: %w", err)
 	}
 	if rejected != "" {
@@ -381,7 +381,7 @@ func (p *mailProcessor) run(msg *MailMessage, req *mailRequest) error {
 	}
 
 	// Sync email mutations back to msg
-	syncEmailVar(vm, emailObj, msg)
+	syncEmailVar(vm.Runtime, emailObj, msg)
 	return nil
 }
 
@@ -434,7 +434,7 @@ func (m *mailMapRoute) eval(dst map[string]string) error {
 	vm.Set("args", argsObj)
 	vm.Set("append", func(key, value string) { dst[key] = value })
 
-	if _, err := m.runScript(vm); err != nil {
+	if _, err := m.runScript(vm.Runtime); err != nil {
 		return fmt.Errorf("mail map route script error: %w", err)
 	}
 	return nil

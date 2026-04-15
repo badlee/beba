@@ -771,9 +771,10 @@ func handleTemplate(c fiber.Ctx, filePath string, isPartial bool, layouts []stri
 		for _, lPath := range layouts {
 			c.Locals("content", res)
 			ext := filepath.Ext(lPath)
-			if ext == cfg.TemplateExt {
+			switch ext {
+			case cfg.TemplateExt:
 				res, err = processor.ProcessFile(lPath, c, cfg.AppConfig, cfg.Settings)
-			} else if ext == ".js" {
+			case ".js":
 				res, err = runAndCaptureJS(c, lPath, cfg)
 			}
 			if err != nil {
@@ -892,7 +893,7 @@ func runAndCaptureJS(c fiber.Ctx, filePath string, cfg RouterConfig) (string, er
 // ==================== MIDDLEWARE ====================
 
 // buildMiddlewareChain construit la chaîne de handlers pour les _middleware.js.
-func buildMiddlewareChain(mwPaths []string, middlewareMap map[string]string, cfg RouterConfig) []fiber.Handler {
+func buildMiddlewareChain(mwPaths []string, _ /*middlewareMap*/ map[string]string, cfg RouterConfig) []fiber.Handler {
 	var handlers []fiber.Handler
 	for _, mwPath := range mwPaths {
 		p := mwPath // capture
@@ -1265,7 +1266,7 @@ func probeModuleExports(filePath string) []string {
 		return nil
 	}
 
-	obj := exportsVal.ToObject(vm)
+	obj := exportsVal.ToObject(vm.Runtime)
 	if obj == nil {
 		return nil
 	}
@@ -1282,8 +1283,9 @@ func probeModuleExports(filePath string) []string {
 
 // newProbeVM crée un VM goja minimal pour inspecter module.exports.
 // N'expose pas fiber.Ctx — utilisé uniquement pour l'introspection au scan.
-func newProbeVM() *goja.Runtime {
-	vm := goja.New()
+func newProbeVM() *processor.Processor {
+	vm := processor.NewVM()
+	vm.AttachGlobals()
 
 	// Shim CommonJS module.exports
 	moduleObj := vm.NewObject()
@@ -1332,9 +1334,10 @@ func handleJSExport(c fiber.Ctx, filePath, method string, isPartial bool, layout
 		for _, lPath := range layouts {
 			c.Locals("content", res)
 			ext := filepath.Ext(lPath)
-			if ext == cfg.TemplateExt {
+			switch ext {
+			case cfg.TemplateExt:
 				res, err = processor.ProcessFile(lPath, c, cfg.AppConfig, cfg.Settings)
-			} else if ext == ".js" {
+			case ".js":
 				res, err = runAndCaptureJS(c, lPath, cfg)
 			}
 			if err != nil {
@@ -1407,7 +1410,7 @@ func runAndCaptureJSExport(c fiber.Ctx, filePath, method string, cfg RouterConfi
 	if exportsVal == nil || exportsVal.Export() == nil {
 		return "", fmt.Errorf("module.exports is empty")
 	}
-	exportsObject := exportsVal.ToObject(vm)
+	exportsObject := exportsVal.ToObject(vm.Runtime)
 
 	var handlerFn goja.Callable
 	for _, key := range []string{method, "ANY"} {

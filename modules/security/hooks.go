@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"http-server/plugins/httpserver"
+	"http-server/processor"
 
 	"github.com/dop251/goja"
 )
@@ -73,7 +74,21 @@ func RunGeoHook(hook httpserver.WAFHook, conn net.Conn, geoCtx *GeoContext) (boo
 // runHookWithVM builds a goja VM, calls setup, wires allow/reject/log, runs the code.
 // Returns (true, nil) for allow, (false, nil) for reject, (false, err) on hard error.
 func runHookWithVM(hook httpserver.WAFHook, setup func(vm *goja.Runtime)) (bool, error) {
-	vm := goja.New()
+	var vm *processor.Processor
+	// test if file exists
+	if !hook.Inline {
+		file, err := os.Stat(hook.Handler)
+		if err != nil {
+			return false, err
+		}
+		if file.IsDir() {
+			return false, fmt.Errorf("security hook: %s is a directory", hook.Handler)
+		}
+		vm = processor.New(filepath.Dir(hook.Handler), nil, nil)
+	} else {
+		vm = processor.NewVM()
+	}
+	vm.AttachGlobals()
 
 	// Signal channels via panic (same pattern goja uses internally)
 	type allowSignal struct{}
@@ -110,7 +125,7 @@ func runHookWithVM(hook httpserver.WAFHook, setup func(vm *goja.Runtime)) (bool,
 	}
 
 	// Call the user-provided setup to inject CONN/GEO
-	setup(vm)
+	setup(vm.Runtime)
 
 	// Determine code to run
 	var code string

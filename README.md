@@ -10,8 +10,8 @@
 *   **⚡ Rendu SSR & Scripting JS Natif**  
     Boostez vos performances avec un moteur **JavaScript** serveur intégré. Définissez votre logique métier directement dans vos templates ou scripts isolés, bénéficiant d'un pont direct vers vos données sans l'overhead d'une API externe.
     
-*   **🛠️ Headless CMS & Admin UI Temps-Réel**  
-    Basculez en mode **Headless CMS** instantanément. Le module **CRUD** génère automatiquement vos API REST et une interface d'administration temps-réel (propulsée par HTMX + SSE), vous permettant de piloter vos données (SQLite, PostgreSQL, MySQL) dès le lancement.
+*   **🛠️ Engine Database/CRUD Unifié & Admin UI**  
+    Basculez en mode **Headless CMS** instantanément. Le module **DATABASE** unifie désormais le moteur CRUD et les schémas dynamiques. Il génère automatiquement vos API REST et une interface d'administration temps-réel (propulsée par HTMX + SSE), gérant nativement les relations (`has=one`, `many`, `many2many`) et les migrations différées sécurisées (Dual Struct).
     
 *   **📡 Hub Realtime Massivement Scalable (+1M de clients)**  
     Le cœur du système : un hub de messagerie haute performance capable de gérer **plus d'un million de clients simultanément**. Support natif de **SSE**, **WebSocket**, **MQTT over WebSocket** et **Socket.IO**. Grâce au **Binder** innovant, multiplexez ces protocoles sur un seul port pour une interopérabilité totale.
@@ -22,7 +22,7 @@
 ## Architecture & Modules
 - **Binder (`modules/binder`)** : Multiplexage de protocoles (HTTP, DTP, MQTT, JS custom) sur un même port via des fichiers `.bind`.
 - **Temps-Réel (`modules/sse`)** : Hub SSE/WS/MQTT/IO sharded haute performance (1M+ connexions).
-- **Base de Données (`modules/db`)** : API Mongoose-like (GORM) pour SQLite, MySQL, Postgres, etc.
+- **Base de Données (`modules/db` & `modules/crud`)** : Moteur unifié Mongoose-like (GORM) avec support des relations, schémas dynamiques et migrations "Dual Struct" anti-panique.
 - **Paiement (`modules/binder/payment`)** : Intégration unifée Stripe, Mobile Money et Crypto (X402).
 - **Sécurité (`modules/security`)** : Moteur de filtrage L4 et pare-feu applicatif (WAF).
 - **Scripting Script (`processor/`)** : Rendu hybride Mustache/JS et exécution server-side isolée.
@@ -129,6 +129,15 @@ HTTP 0.0.0.0:8080
     POST @WAF @PAYMENT[name=my_stripe price="10.00" ref="premium_access"] "/premium/data" JSON
         {"status": "paid", "data": "Top secret info"}
     END POST
+
+    # Schéma avec relations et contraintes
+    DATABASE "sqlite://:memory:"
+        SCHEMA Project DEFINE
+            FIELD name string [required]
+            FIELD owner_id User.id [has=one delete=cascade]
+            FIELD members User.id [has=many2many]
+        END SCHEMA
+    END DATABASE
 
     # Hub Real-time unifié
     SSE /events

@@ -27,8 +27,9 @@ func newSO(name string, data interface{}) *SharedObject {
 
 func run(t *testing.T, so *SharedObject, script string) goja.Value {
 	t.Helper()
-	vm := goja.New()
-	if err := so.attach(vm); err != nil {
+	vm := NewEmpty()
+	vm.AttachGlobals()
+	if err := so.attach(vm.Runtime); err != nil {
 		t.Fatalf("attach: %v", err)
 	}
 	val, err := vm.RunString(script)
@@ -40,11 +41,12 @@ func run(t *testing.T, so *SharedObject, script string) goja.Value {
 
 func newVM(t *testing.T, so *SharedObject) *goja.Runtime {
 	t.Helper()
-	vm := goja.New()
-	if err := so.attach(vm); err != nil {
+	vm := NewEmpty()
+	vm.AttachGlobals()
+	if err := so.attach(vm.Runtime); err != nil {
 		t.Fatalf("attach: %v", err)
 	}
-	return vm
+	return vm.Runtime
 }
 
 func runInVM(t *testing.T, vm *goja.Runtime, script string) goja.Value {
@@ -531,8 +533,9 @@ func TestLive_Concurrent_NoRace(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			vm := goja.New()
-			if err := so.attach(vm); err != nil {
+			vm := NewEmpty()
+			vm.AttachGlobals()
+			if err := so.attach(vm.Runtime); err != nil {
 				return
 			}
 			_, _ = vm.RunString(`config.port`)
@@ -897,8 +900,8 @@ func TestRegisterGlobal_AttachGlobals(t *testing.T) {
 	type Cfg struct{ Value int }
 	RegisterGlobal("TestCfg", &Cfg{Value: 42})
 
-	vm := goja.New()
-	AttachGlobals(vm)
+	vm := NewEmpty()
+	vm.AttachGlobals()
 	v, err := vm.RunString(`testCfg.value`)
 	if err != nil {
 		t.Fatalf("RunString: %v", err)
@@ -921,8 +924,8 @@ func TestRegisterGlobal_NameConversion(t *testing.T) {
 
 	type S struct{ X int }
 	RegisterGlobal("AppConfig", &S{X: 7})
-	vm := goja.New()
-	AttachGlobals(vm)
+	vm := NewEmpty()
+	vm.AttachGlobals()
 	v, err := vm.RunString(`appConfig.x`)
 	if err != nil {
 		t.Fatalf("RunString: %v", err)
@@ -1045,8 +1048,8 @@ func TestUnregisterGlobal_NotAttachedToNewVM(t *testing.T) {
 	RegisterGlobal("Gone", &S{V: 99})
 	UnregisterGlobal("Gone")
 
-	vm := goja.New()
-	AttachGlobals(vm)
+	vm := NewEmpty()
+	vm.AttachGlobals()
 
 	v, err := vm.RunString(`typeof gone`)
 	if err != nil {
@@ -1075,8 +1078,8 @@ func TestRegisterGlobal_IgnoreIfExist_True(t *testing.T) {
 	RegisterGlobal("Once", first)
 	RegisterGlobal("Once", second, true) // doit être ignoré
 
-	vm := goja.New()
-	AttachGlobals(vm)
+	vm := NewEmpty()
+	vm.AttachGlobals()
 
 	v, err := vm.RunString(`once.v`)
 	if err != nil {
@@ -1105,8 +1108,8 @@ func TestRegisterGlobal_IgnoreIfExist_False(t *testing.T) {
 	RegisterGlobal("Override", first)
 	RegisterGlobal("Override", second) // remplace (pas d'ignoreIfExist)
 
-	vm := goja.New()
-	AttachGlobals(vm)
+	vm := NewEmpty()
+	vm.AttachGlobals()
 
 	v, err := vm.RunString(`override.v`)
 	if err != nil {
@@ -1133,8 +1136,8 @@ func TestRegisterGlobal_IgnoreIfExist_DefaultFalse(t *testing.T) {
 	RegisterGlobal("X", &S{V: 10})
 	RegisterGlobal("X", &S{V: 20}) // écrase
 
-	vm := goja.New()
-	AttachGlobals(vm)
+	vm := NewEmpty()
+	vm.AttachGlobals()
 
 	v, err := vm.RunString(`x.v`)
 	if err != nil {
@@ -1160,8 +1163,8 @@ func TestRegister_SingleVM(t *testing.T) {
 	type S struct{ Name string }
 	cfg := &S{Name: "local"}
 
-	vm1 := goja.New()
-	Register(vm1, "LocalCfg", cfg)
+	vm1 := NewEmpty()
+	vm1.Register("LocalCfg", cfg)
 
 	// vm1 doit avoir localCfg
 	v, err := vm1.RunString(`localCfg.name`)
@@ -1171,8 +1174,8 @@ func TestRegister_SingleVM(t *testing.T) {
 	mustStr(t, v, "local")
 
 	// vm2 ne doit PAS avoir localCfg (non global)
-	vm2 := goja.New()
-	AttachGlobals(vm2) // installe les globaux, mais pas localCfg
+	vm2 := NewEmpty()
+	vm2.AttachGlobals() // installe les globaux, mais pas localCfg
 	v2, err := vm2.RunString(`typeof localCfg`)
 	if err != nil {
 		t.Fatalf("vm2 RunString: %v", err)
@@ -1191,8 +1194,8 @@ func TestRegister_Write_UpdatesGo(t *testing.T) {
 	type S struct{ Port int }
 	cfg := &S{Port: 80}
 
-	vm := goja.New()
-	Register(vm, "Srv", cfg)
+	vm := NewEmpty()
+	vm.Register("Srv", cfg)
 
 	_, err := vm.RunString(`srv.port = 9090`)
 	if err != nil {
@@ -1207,9 +1210,10 @@ func TestRegister_Subscribe_Works(t *testing.T) {
 	type S struct{ V int }
 	cfg := &S{V: 0}
 
-	vm := goja.New()
+	vm := NewEmpty()
+	vm.AttachGlobals()
 	so := &SharedObject{name: "Test", data: cfg}
-	_ = so.attach(vm)
+	_ = so.attach(vm.Runtime)
 
 	var events []ChangeEvent
 	so.Subscribe(func(ev ChangeEvent) { events = append(events, ev) })

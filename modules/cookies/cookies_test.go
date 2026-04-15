@@ -1,9 +1,9 @@
 package cookies
 
 import (
+	"http-server/processor"
 	"testing"
 
-	"github.com/dop251/goja"
 	"github.com/gofiber/fiber/v3"
 )
 
@@ -31,17 +31,18 @@ func (m *MockCookieCtx) ClearCookie(key string, path ...string) {
 }
 
 func TestCookiesModule(t *testing.T) {
-	vm := goja.New()
-	
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
+
 	mockCtx := &MockCookieCtx{data: make(map[string]string)}
 	mod := &Module{}
-	
+
 	exports := vm.NewObject()
 	moduleObj := vm.NewObject()
 	moduleObj.Set("exports", exports)
-	
-	mod.Loader(mockCtx, vm, moduleObj)
-	
+
+	mod.Loader(mockCtx, vm.Runtime, moduleObj)
+
 	vm.Set("cookies", exports)
 
 	script := `
@@ -53,7 +54,7 @@ func TestCookiesModule(t *testing.T) {
 		if (cookies.has("user")) throw new Error("Has failed after remove");
 		if (cookies.get("user") !== "") throw new Error("Get failed after remove");
 	`
-	
+
 	_, err := vm.RunString(script)
 	if err != nil {
 		t.Fatalf("JS Execution failed: %v", err)

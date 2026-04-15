@@ -96,6 +96,7 @@ type Model struct {
 	db         *gorm.DB
 	conn       *Connection
 	NativeType reflect.Type
+	isBuilding bool
 }
 
 func (m *Model) AddMethod(item Item) {
@@ -147,33 +148,32 @@ type Connection struct {
 }
 
 func (conn *Connection) Close() (err error) {
-	defer func() {
-		if e := recover(); e != nil {
-			err = fmt.Errorf("failed to close connection: %v", e)
-		}
-		AllConnectionsMu.Lock()
-		defer AllConnectionsMu.Unlock()
-		delete(AllConnections, conn.name)
-		conn.Lock()
-		defer conn.Unlock()
-		for k := range conn.models {
-			delete(conn.models, k)
-		}
-		conn.name = ""
-		conn.vm = nil
-		conn.db = nil
-	}()
 	conn.RLock()
-	defer conn.RUnlock()
+	d := conn.db
+	conn.RUnlock()
 
-	if conn.db == nil {
-		return nil
+	if d != nil {
+		if sqlDB, e := d.DB(); e == nil {
+			err = sqlDB.Close()
+		}
 	}
-	if sqlDB, err := conn.db.DB(); err == nil {
-		return sqlDB.Close()
-	} else {
-		return err
+
+	AllConnectionsMu.Lock()
+	defer AllConnectionsMu.Unlock()
+	delete(AllConnections, conn.name)
+	conn.cleanup()
+	return
+}
+
+func (conn *Connection) cleanup() {
+	conn.Lock()
+	defer conn.Unlock()
+	for k := range conn.models {
+		delete(conn.models, k)
 	}
+	conn.name = ""
+	conn.vm = nil
+	conn.db = nil
 }
 
 func (conn *Connection) GetDB() *gorm.DB {
@@ -227,9 +227,10 @@ func NewConnection(db *gorm.DB, name ...string) *Connection {
 	}
 	AllConnectionsMu.Lock()
 	defer AllConnectionsMu.Unlock()
-	if conn, ok := AllConnections[n]; ok {
+	if oldConn, ok := AllConnections[n]; ok {
 		// silent close old connection
-		conn.Close()
+		delete(AllConnections, n)
+		oldConn.cleanup()
 	}
 	AllConnections[n] = conn
 	return conn

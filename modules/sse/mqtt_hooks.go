@@ -11,7 +11,6 @@ import (
 	"http-server/plugins/config"
 	"http-server/processor"
 
-	"github.com/dop251/goja"
 	mqtt "github.com/mochi-mqtt/server/v2"
 	"github.com/mochi-mqtt/server/v2/packets"
 )
@@ -37,7 +36,7 @@ type AuthHandler struct {
 type MQTTHooksDispatcher struct {
 	baseDir string
 	env     map[string]string
-	vm      *goja.Runtime
+	vm      *processor.Processor
 	auths   []*AuthHandler
 	acls    []*MQTTRoute
 	bridges []*MQTTRoute

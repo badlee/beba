@@ -1,14 +1,13 @@
 package fetch
 
 import (
+	"http-server/processor"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
-
-	"github.com/dop251/goja"
 )
 
 func TestFetchHTTP(t *testing.T) {
@@ -24,9 +23,10 @@ func TestFetchHTTP(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	vm := goja.New()
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
 	mod := &Module{client: ts.Client()}
-	mod.Loader(nil, vm, vm.NewObject()) // Load injects globally
+	mod.Loader(nil, vm.Runtime, vm.NewObject()) // Load injects globally
 
 	_, err := vm.RunString(`
 		var result = null;
@@ -63,9 +63,10 @@ func TestFetchFile(t *testing.T) {
 	tmpFile := filepath.Join(t.TempDir(), "test.txt")
 	os.WriteFile(tmpFile, []byte("local-content"), 0644)
 
-	vm := goja.New()
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
 	mod := &Module{client: &http.Client{Timeout: 5 * time.Second}}
-	mod.Loader(nil, vm, vm.NewObject())
+	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	_, err := vm.RunString(`
 		var result = null;
@@ -85,9 +86,10 @@ func TestFetchFile(t *testing.T) {
 }
 
 func TestFetchNoArgs(t *testing.T) {
-	vm := goja.New()
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
 	mod := &Module{client: &http.Client{Timeout: 5 * time.Second}}
-	mod.Loader(nil, vm, vm.NewObject())
+	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	_, err := vm.RunString(`
 		var rejected = false;
@@ -114,9 +116,10 @@ func TestFetchHTTPGet(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	vm := goja.New()
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
 	mod := &Module{client: ts.Client()}
-	mod.Loader(nil, vm, vm.NewObject())
+	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	_, err := vm.RunString(`
 		var textResult = null;
@@ -140,9 +143,10 @@ func TestFetchHTTPHeaders(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	vm := goja.New()
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
 	mod := &Module{client: ts.Client()}
-	mod.Loader(nil, vm, vm.NewObject())
+	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	_, err := vm.RunString(`
 		var headerResult = null;
@@ -169,9 +173,10 @@ func TestFetchHTTP404(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	vm := goja.New()
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
 	mod := &Module{client: ts.Client()}
-	mod.Loader(nil, vm, vm.NewObject())
+	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	_, err := vm.RunString(`
 		var fetchOk = null;
@@ -201,9 +206,10 @@ func TestFetchJSONParseError(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	vm := goja.New()
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
 	mod := &Module{client: ts.Client()}
-	mod.Loader(nil, vm, vm.NewObject())
+	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	_, err := vm.RunString(`
 		var jsonError = false;
@@ -221,9 +227,10 @@ func TestFetchJSONParseError(t *testing.T) {
 }
 
 func TestFetchFileMissing(t *testing.T) {
-	vm := goja.New()
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
 	mod := &Module{client: &http.Client{Timeout: 5 * time.Second}}
-	mod.Loader(nil, vm, vm.NewObject())
+	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	_, err := vm.RunString(`
 		var fileError = false;
@@ -244,9 +251,10 @@ func TestFetchRelativePath(t *testing.T) {
 	tmpFile := filepath.Join(tmpDir, "relative.txt")
 	os.WriteFile(tmpFile, []byte("relative-data"), 0644)
 
-	vm := goja.New()
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
 	mod := &Module{client: &http.Client{Timeout: 5 * time.Second}}
-	mod.Loader(nil, vm, vm.NewObject())
+	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	// Fetch using a bare path (no scheme)
 	_, err := vm.RunString(`
@@ -265,9 +273,10 @@ func TestFetchRelativePath(t *testing.T) {
 }
 
 func TestFetchNetworkError(t *testing.T) {
-	vm := goja.New()
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
 	mod := &Module{client: &http.Client{Timeout: 1 * time.Second}}
-	mod.Loader(nil, vm, vm.NewObject())
+	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	_, err := vm.RunString(`
 		var netErr = false;

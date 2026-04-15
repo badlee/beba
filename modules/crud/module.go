@@ -249,6 +249,8 @@ func NewCrudDirective(cfg *CrudDirectiveConfig) (*CrudDirective, error) {
 	return &CrudDirective{cfg: cfg}, nil
 }
 
+func (d *CrudDirective) Config() *CrudDirectiveConfig { return d.cfg }
+
 func (d *CrudDirective) Name() string                    { return "CRUD" }
 func (d *CrudDirective) Address() string                 { return d.cfg.Address }
 func (d *CrudDirective) Match(peek []byte) (bool, error) { return false, nil }

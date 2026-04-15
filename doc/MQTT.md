@@ -19,6 +19,13 @@ MQTT is accessible via:
 
 ---
 
+
+## 🏗️ Security Interoperability
+Because `http-server` uses a defense-in-depth model, the **MQTT Broker** is protected by the **Sentinel Layer (L1-L4)** even before the first MQTT packet is parsed.
+- **Connection Denial**: Blocked IPs or Geo-restricted countries are rejected at the `net.Accept` stage.
+- **DDoS Mitigation**: The `CONNECTION RATE` directive prevents the broker from being overwhelmed by rapid `CONNECT` attempts.
+- **Sniffing Security**: Using `bufio.Peek`, the security engine inspects the headers of a connection without consuming it, allowing the MQTT broker to receive the full handshake if allowed.
+
 ## 🚀 Configuration
 
 ```hcl

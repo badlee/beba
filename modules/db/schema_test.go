@@ -1,9 +1,9 @@
 package db
 
 import (
+	"http-server/processor"
 	"testing"
 
-	"github.com/dop251/goja"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
@@ -155,7 +155,8 @@ func TestQuerySelectOmit(t *testing.T) {
 
 func TestJSQueryFindOne(t *testing.T) {
 	db, _ := gorm.Open(sqlite.New(sqlite.Config{DriverName: "sqlite", DSN: ":memory:"}), &gorm.Config{})
-	vm := goja.New()
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
 
 	schema := &Schema{
 		Paths: map[string]SchemaType{
@@ -174,7 +175,7 @@ func TestJSQueryFindOne(t *testing.T) {
 	db.Exec("INSERT INTO users (id, name, age) VALUES ('2', 'Bob', 30)")
 
 	// Test returnFirstOnly mode
-	jsQuery := NewQuery(model, vm).ToJSObject(true)
+	jsQuery := NewQuery(model, vm.Runtime).ToJSObject(true)
 	vm.Set("query", jsQuery)
 
 	_, err := vm.RunString(`

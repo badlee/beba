@@ -2,7 +2,7 @@ package db
 
 import (
 	"fmt"
-	"http-server/plugins/js"
+	"http-server/processor"
 
 	"github.com/dop251/goja"
 	"gorm.io/gorm"
@@ -12,7 +12,7 @@ func RegisterMongoose(vm *goja.Runtime, db *gorm.DB, name ...string) goja.Value 
 	var conn *Connection
 	conn = NewConnection(db, name...)
 	conn.vm = vm
-	return conn.ToJSObject(vm)
+	return conn.ToJSObject()
 }
 
 func createSchemaProxy(vm *goja.Runtime, s *Schema) goja.Value {
@@ -64,7 +64,11 @@ func createSchemaProxy(vm *goja.Runtime, s *Schema) goja.Value {
 	return obj
 }
 
-func (conn *Connection) ToJSObject(vm *goja.Runtime) goja.Value {
+func (conn *Connection) ToJSObject(vms ...*goja.Runtime) goja.Value {
+	vm := conn.vm
+	if len(vms) > 0 {
+		vm = vms[0]
+	}
 	// Auto-migrate la table de schémas
 	conn.db.AutoMigrate(&SchemaRecord{})
 
@@ -86,7 +90,7 @@ func (conn *Connection) ToJSObject(vm *goja.Runtime) goja.Value {
 			schema = append(schema, call.Argument(1))
 		}
 		model := conn.Model(name, schema...)
-		return conn.createModelProxy(vm, model)
+		return conn.createModelProxy(model)
 	}
 	dbObj := vm.NewObject()
 	dbObj.Set("Schema", schemaCtor)
@@ -94,11 +98,11 @@ func (conn *Connection) ToJSObject(vm *goja.Runtime) goja.Value {
 	dbObj.Set("model", model)
 	return dbObj
 }
-func (conn *Connection) createModelProxy(vm *goja.Runtime, model *Model) goja.Value {
+func (conn *Connection) createModelProxy(model *Model) goja.Value {
 	if model == nil {
 		return goja.Undefined()
 	}
-
+	vm := conn.vm
 	obj := vm.NewObject()
 
 	// Méthode schema (comme mongoose.Schema)
@@ -176,7 +180,7 @@ func (conn *Connection) createModelProxy(vm *goja.Runtime, model *Model) goja.Va
 
 	// Ajouter les fonctions statiques
 	for funcName, funcCode := range model.Schema.Statics {
-		fullCode := js.GetFunction(funcCode)
+		fullCode := processor.GetFunction(funcCode)
 
 		if fn, err := vm.RunString(fullCode); err == nil {
 			obj.Set(funcName, func(call goja.FunctionCall) goja.Value {

@@ -216,6 +216,21 @@ func (m *Model) createStructType() reflect.Type {
 	if m.NativeType != nil {
 		return m.NativeType
 	}
+	if m.isBuilding {
+		return reflect.TypeOf((*interface{})(nil)).Elem()
+	}
+	m.isBuilding = true
+	defer func() { m.isBuilding = false }()
+
+	m.NativeType = m.buildStructType(false)
+	return m.NativeType
+}
+
+func (m *Model) createMigrationType() reflect.Type {
+	return m.buildStructType(true)
+}
+
+func (m *Model) buildStructType(forMigration bool) reflect.Type {
 
 	structFields := []reflect.StructField{
 		{
@@ -236,7 +251,7 @@ func (m *Model) createStructType() reflect.Type {
 	}
 
 	for fieldName, fieldSchema := range m.Schema.Paths {
-		goFieldName := toCamelCase(fieldName)
+		goFieldName := ToCamelCase(fieldName)
 		var goFieldType reflect.Type
 
 		if fieldSchema.Ref != "" {
@@ -248,7 +263,7 @@ func (m *Model) createStructType() reflect.Type {
 				targetField = refParts[1]
 			}
 
-			targetModel := m.conn.GetModels()[targetName]
+			targetModel := m.conn.models[targetName]
 			// In case of circular dependency or forward reference, targetModel might be nil or its NativeType might be nil
 			var targetFieldSchema *SchemaType
 			if targetModel != nil {
@@ -286,19 +301,23 @@ func (m *Model) createStructType() reflect.Type {
 				})
 			}
 
-			// Add Shadow Association Field
-			assocName := toCamelCase(targetName)
-			if fieldSchema.Has == "many" || fieldSchema.Has == "many2many" {
-				assocName = toCamelCase(fieldName)
+			if forMigration {
+				continue
 			}
 
-			if assocName == goFieldName && fieldSchema.Has != "many" && fieldSchema.Has != "many2many" {
+			// Add Shadow Association Field
+			assocName := ToCamelCase(targetName)
+			if fieldSchema.Has == "many" || fieldSchema.Has == "many2many" {
+				assocName = ToCamelCase(fieldName)
+			}
+
+			if fieldSchema.Has != "many" && fieldSchema.Has != "many2many" {
 				assocName += "Ref"
 			}
 
 			var assocType reflect.Type
-			if targetModel != nil && targetModel.NativeType != nil {
-				assocType = targetModel.NativeType
+			if targetModel != nil {
+				assocType = targetModel.createStructType()
 			} else {
 				// Circular or forward reference: use interface{}
 				assocType = reflect.TypeOf((*interface{})(nil)).Elem()
@@ -311,7 +330,7 @@ func (m *Model) createStructType() reflect.Type {
 				} else {
 					assocType = reflect.TypeOf([]interface{}{})
 				}
-				assocTag = fmt.Sprintf(`gorm:"foreignKey:%s;references:ID"`, toCamelCase(targetField))
+				assocTag = fmt.Sprintf(`json:"%s" gorm:"foreignKey:%s;references:ID"`, assocName, ToCamelCase(targetField))
 			} else if fieldSchema.Has == "many2many" {
 				if targetModel != nil && targetModel.NativeType != nil {
 					assocType = reflect.SliceOf(assocType)
@@ -319,12 +338,12 @@ func (m *Model) createStructType() reflect.Type {
 					assocType = reflect.TypeOf([]interface{}{})
 				}
 				joinTable := fmt.Sprintf("%s_%s", strings.ToLower(m.Name), strings.ToLower(fieldName))
-				assocTag = fmt.Sprintf(`gorm:"many2many:%s"`, joinTable)
+				assocTag = fmt.Sprintf(`json:"%s" gorm:"many2many:%s"`, assocName, joinTable)
 			} else {
 				if targetModel != nil && targetModel.NativeType != nil {
 					assocType = reflect.PtrTo(assocType)
 				}
-				assocTag = fmt.Sprintf(`gorm:"foreignKey:%s;references:%s"`, goFieldName, toCamelCase(targetField))
+				assocTag = fmt.Sprintf(`json:"%s" gorm:"foreignKey:%s;references:%s"`, assocName, goFieldName, ToCamelCase(targetField))
 			}
 
 			structFields = append(structFields, reflect.StructField{
@@ -353,17 +372,23 @@ func (m *Model) createStructType() reflect.Type {
 		})
 	}
 
-	m.NativeType = reflect.StructOf(structFields)
-	return m.NativeType
+	return reflect.StructOf(structFields)
 }
 
-func toCamelCase(fieldName string) string {
+func ToCamelCase(fieldName string) string {
+	if strings.ToLower(fieldName) == "id" {
+		return "ID"
+	}
 	parts := strings.FieldsFunc(fieldName, func(r rune) bool {
 		return r == '_' || r == '-' || r == ' '
 	})
 
 	for i, part := range parts {
 		if part == "" {
+			continue
+		}
+		if strings.ToLower(part) == "id" {
+			parts[i] = "ID"
 			continue
 		}
 		runes := []rune(part)

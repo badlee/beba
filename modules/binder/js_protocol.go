@@ -13,7 +13,7 @@ import (
 type JSDirective struct {
 	name           string
 	args           map[string]string
-	vm             *goja.Runtime
+	vm             *processor.Processor
 	matchFn        goja.Callable
 	handleFn       goja.Callable
 	handlePacketFn goja.Callable
@@ -28,8 +28,8 @@ func NewJSDirective(item *DirectiveConfig, config ProtocolRegistration) (*JSDire
 		return nil, fmt.Errorf("js compile error: %v", err)
 	}
 
-	processor.Register(vm, "Directives", item)
-	processor.Register(vm, "Args", config.Args)
+	vm.Register("Directives", item)
+	vm.Register("Args", config.Args)
 
 	// Get the match function
 	matchVal := vm.Get("match")
@@ -111,7 +111,7 @@ func (p *JSDirective) Handle(conn net.Conn) error {
 	}
 
 	// 1. Socket Wrapper (Node.js style)
-	jsSocket := NewJSSocket(conn, p.vm)
+	jsSocket := NewJSSocket(conn, p.vm.Runtime)
 	p.vm.Set("socket", jsSocket)
 
 	// 2. Legacy Emitter (kept for backward compatibility with first version)

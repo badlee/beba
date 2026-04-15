@@ -1,9 +1,9 @@
 package db
 
 import (
+	"http-server/processor"
 	"testing"
 
-	"github.com/dop251/goja"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
@@ -198,7 +198,8 @@ func TestQueryChaining(t *testing.T) {
 
 func TestJSQuery(t *testing.T) {
 	db, _ := gorm.Open(sqlite.New(sqlite.Config{DriverName: "sqlite", DSN: ":memory:"}), &gorm.Config{})
-	vm := goja.New()
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
 
 	schema := &Schema{
 		Paths: map[string]SchemaType{
@@ -215,7 +216,7 @@ func TestJSQuery(t *testing.T) {
 	db.Exec("CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT, age INTEGER)")
 	db.Exec("INSERT INTO users (id, name, age) VALUES ('1', 'Alice', 25)")
 
-	jsQuery := NewQuery(model, vm).ToJSObject()
+	jsQuery := NewQuery(model, vm.Runtime).ToJSObject()
 	vm.Set("query", jsQuery)
 
 	// Test Chaining and Exec in JS

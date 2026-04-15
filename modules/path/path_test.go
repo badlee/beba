@@ -1,16 +1,16 @@
 package path
 
 import (
+	"http-server/processor"
 	"runtime"
 	"testing"
-
-	"github.com/dop251/goja"
 )
 
 func TestPathJoin(t *testing.T) {
-	vm := goja.New()
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
 	mod := &Module{}
-	mod.Loader(nil, vm, vm.NewObject())
+	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	_, err := vm.RunString(`
 		var result = path.join("/usr", "local", "bin");
@@ -22,9 +22,10 @@ func TestPathJoin(t *testing.T) {
 }
 
 func TestPathBasename(t *testing.T) {
-	vm := goja.New()
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
 	mod := &Module{}
-	mod.Loader(nil, vm, vm.NewObject())
+	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	_, err := vm.RunString(`
 		if (path.basename("/foo/bar/baz.html") !== "baz.html") throw new Error("basename failed");
@@ -37,9 +38,10 @@ func TestPathBasename(t *testing.T) {
 }
 
 func TestPathDirname(t *testing.T) {
-	vm := goja.New()
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
 	mod := &Module{}
-	mod.Loader(nil, vm, vm.NewObject())
+	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	_, err := vm.RunString(`
 		if (path.dirname("/foo/bar/baz.html") !== "/foo/bar") throw new Error("dirname failed: " + path.dirname("/foo/bar/baz.html"));
@@ -50,9 +52,10 @@ func TestPathDirname(t *testing.T) {
 }
 
 func TestPathExtname(t *testing.T) {
-	vm := goja.New()
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
 	mod := &Module{}
-	mod.Loader(nil, vm, vm.NewObject())
+	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	_, err := vm.RunString(`
 		if (path.extname("index.html") !== ".html") throw new Error("extname failed");
@@ -66,9 +69,10 @@ func TestPathExtname(t *testing.T) {
 }
 
 func TestPathIsAbsolute(t *testing.T) {
-	vm := goja.New()
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
 	mod := &Module{}
-	mod.Loader(nil, vm, vm.NewObject())
+	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	if runtime.GOOS != "windows" {
 		_, err := vm.RunString(`
@@ -82,9 +86,10 @@ func TestPathIsAbsolute(t *testing.T) {
 }
 
 func TestPathNormalize(t *testing.T) {
-	vm := goja.New()
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
 	mod := &Module{}
-	mod.Loader(nil, vm, vm.NewObject())
+	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	_, err := vm.RunString(`
 		var n = path.normalize("/foo/bar//baz/../qux");
@@ -96,9 +101,10 @@ func TestPathNormalize(t *testing.T) {
 }
 
 func TestPathRelative(t *testing.T) {
-	vm := goja.New()
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
 	mod := &Module{}
-	mod.Loader(nil, vm, vm.NewObject())
+	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	_, err := vm.RunString(`
 		var r = path.relative("/data/orandea/test/aaa", "/data/orandea/impl/bbb");
@@ -110,9 +116,10 @@ func TestPathRelative(t *testing.T) {
 }
 
 func TestPathParse(t *testing.T) {
-	vm := goja.New()
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
 	mod := &Module{}
-	mod.Loader(nil, vm, vm.NewObject())
+	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	_, err := vm.RunString(`
 		var p = path.parse("/home/user/dir/file.txt");
@@ -127,9 +134,10 @@ func TestPathParse(t *testing.T) {
 }
 
 func TestPathResolve(t *testing.T) {
-	vm := goja.New()
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
 	mod := &Module{}
-	mod.Loader(nil, vm, vm.NewObject())
+	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	_, err := vm.RunString(`
 		var r = path.resolve("/foo", "bar");
@@ -141,9 +149,10 @@ func TestPathResolve(t *testing.T) {
 }
 
 func TestPathSep(t *testing.T) {
-	vm := goja.New()
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
 	mod := &Module{}
-	mod.Loader(nil, vm, vm.NewObject())
+	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	_, err := vm.RunString(`
 		if (typeof path.sep !== "string" || path.sep.length !== 1) throw new Error("sep invalid: " + path.sep);
@@ -164,9 +173,10 @@ func TestModuleNameAndDoc(t *testing.T) {
 }
 
 func TestPathEdgeCases(t *testing.T) {
-	vm := goja.New()
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
 	mod := &Module{}
-	mod.Loader(nil, vm, vm.NewObject())
+	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	// No-args edge cases
 	_, err := vm.RunString(`

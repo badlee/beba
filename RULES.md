@@ -139,3 +139,34 @@ Ce document définit les règles de codage et les standards à suivre pour le pr
 - **Enregistrement Global** : Tout module créant une ressource persistante (ex: `CRUD` ouvrant une DB) **DOIT** enregistrer cette ressource dans le registre global correspondant (ex: `db.RegisterConnection`) pour permettre aux autres modules (ex: `MQTT STORAGE`) d'y accéder par nom.
 - **Multiplexage Multi-Protocoles** : Lors du développement de nouveaux handlers pour le bloc `TCP` (ex: `MQTT`), utiliser systématiquement l'API `EstablishConnection` ou une injection de socket respectant le peeking (`PeekedConn`) pour éviter la perte des octets initiaux du handshake.
 - **Robustesse des Tests** : Pour les tests d'intégration impliquant des bases de données de persistence et des communications réseau, utiliser un timeout minimum de **5 à 10 secondes** pour absorber les latences environnementales sans compromettre la fiabilité.
+- **Stratégie de Migration (Dual Struct)** : Pour éviter les panics GORM liés aux types dynamiques non-nommés (Segmentation Violation lors de la création de tables avec relations), implémenter systématiquement une "Dual Struct Strategy".
+    - **Principe** : Générer deux types de structs via réflexion : un pour la migration (sans les champs d'association/shadow fields) et un pour le runtime (avec les relations et types Goja).
+    - **Migration en Bloc (Bulk)** : Ne jamais appeler `AutoMigrate` sur un seul modèle à la fois. Enregistrer tous les types au préalable et appeler `conn.AutoMigrate()` globalement pour permettre à GORM de résoudre l'ordre des FK.
+
+**Exemple de Dual Struct Implementation :**
+
+```go
+func (m *Model) buildStructType(forMigration bool) reflect.Type {
+    var fields []reflect.StructField
+    // ... Ajout des colonnes de base (ID, Timestamps) ...
+
+    for _, field := range m.Schema.Paths {
+        if field.Ref != "" {
+            // [IMPORTANT] En mode migration, on ne crée QUE la colonne de FK (string/int)
+            // On saute les shadow fields (ex: UserRef) qui causent des panics
+            // car ils utilisent des types anonymes créés à la volée.
+            if forMigration {
+                fields = append(fields, reflect.StructField{
+                    Name: ToCamelCase(field.Name),
+                    Type: reflect.TypeOf(""), // Type de la colonne simple
+                    Tag:  reflect.StructTag(fmt.Sprintf(`gorm:"column:%s"`, field.Name)),
+                })
+                continue
+            }
+            // En mode runtime, on ajoute les relations complexes pour l'usage JS...
+        }
+    }
+    return reflect.StructOf(fields)
+}
+```
+

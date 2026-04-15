@@ -1,10 +1,9 @@
 package console
 
 import (
+	"http-server/processor"
 	"strings"
 	"testing"
-
-	"github.com/dop251/goja"
 )
 
 type MockPrinter struct {
@@ -18,17 +17,18 @@ func (m *MockPrinter) Warn(s string)  { m.logs = append(m.logs, "WARN: "+s) }
 func (m *MockPrinter) Error(s string) { m.logs = append(m.logs, "ERROR: "+s) }
 
 func TestConsoleOutput(t *testing.T) {
-	vm := goja.New()
-	
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
+
 	printer := &MockPrinter{}
 	mod := &Module{printer: printer}
-	
+
 	exports := vm.NewObject()
 	moduleObj := vm.NewObject()
 	moduleObj.Set("exports", exports)
-	
-	mod.Loader(nil, vm, moduleObj)
-	
+
+	mod.Loader(nil, vm.Runtime, moduleObj)
+
 	vm.Set("console", exports)
 
 	script := `
@@ -38,14 +38,14 @@ func TestConsoleOutput(t *testing.T) {
 		console.info("notice");
 		console.debug("trace");
 	`
-	
+
 	_, err := vm.RunString(script)
 	if err != nil {
 		t.Fatalf("JS Execution failed: %v", err)
 	}
-	
+
 	logStr := strings.Join(printer.logs, "|")
-	
+
 	expected := []string{
 		"LOG: hello world",
 		"ERROR: fatal error",
@@ -53,7 +53,7 @@ func TestConsoleOutput(t *testing.T) {
 		"INFO: notice",
 		"DEBUG: trace",
 	}
-	
+
 	for _, exp := range expected {
 		if !strings.Contains(logStr, exp) {
 			t.Errorf("Expected to find %q in logs, got %q (Log string: %v)", exp, logStr, logStr)

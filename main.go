@@ -32,6 +32,7 @@ import (
 	"http-server/modules/sse"
 	appconfig "http-server/plugins/config"
 	"http-server/plugins/httpserver"
+	"http-server/processor"
 )
 
 // TODO: add fs modules
@@ -132,16 +133,31 @@ func main() {
 		os.Exit(exitCode)
 	}
 
+	args := remainingArgs()
+
+	// Répertoire racine
+	root := "."
+	if len(args) > 0 {
+		root = args[0]
+	}
+	root, err = filepath.Abs(root)
+	if err != nil {
+		exit(fmt.Errorf("Failed to get absolute path: %v", err))
+	}
+
+	processor.SetVMDir(root)
+	processor.SetVMConfig(cfg)
+
 	// Détection mode child (spawné par le master vhost)
 	isChild := os.Getenv("HTTP_SERVER_VHOST_CHILD") == "1"
 
 	// Sous-commandes
-	args := remainingArgs()
+
 	if !isChild && len(args) > 0 && args[0] == "test" {
 		if len(args) < 2 {
 			exit("test command requires a file path")
 		}
-		err := runTemplateTest(args[1], cfg)
+		err := runTemplateTest(args[1], cfg, root)
 		printCapturedLogs(cfg.Stdout, cfg.Stderr)
 		if err != nil {
 			exit(fmt.Errorf("Test Failed: %v", err))
@@ -190,12 +206,6 @@ func main() {
 				}
 			}
 		})
-	}
-
-	// Répertoire racine
-	root := "."
-	if len(args) > 0 {
-		root = args[0]
 	}
 
 	// chdir vers root en mode single ou child
@@ -311,7 +321,7 @@ func main() {
 				fmt.Println("\nBinder shutting down...")
 			}
 		}
-		
+
 		if currentManager != nil {
 			currentManager.Stop()
 		}

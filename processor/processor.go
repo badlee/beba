@@ -3,12 +3,13 @@ package processor
 import (
 	"encoding/json"
 	"fmt"
-	"http-server/modules"
+
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 
+	"http-server/modules"
 	"http-server/plugins/config"
 	"http-server/plugins/require"
 
@@ -21,29 +22,69 @@ import (
 )
 
 var globalObject map[string]require.ModuleLoader
+var vmConfig *config.AppConfig = &config.AppConfig{}
+var vmDir string = "/tmp"
 
-func New(dir string, c fiber.Ctx, cfg *config.AppConfig) *goja.Runtime {
+func SetVMConfig(cfg *config.AppConfig) {
+	vmConfig = cfg
+}
+
+func SetVMDir(dir string) {
+	vmDir = dir
+}
+
+type Processor struct {
+	*goja.Runtime
+}
+
+func NewEmpty() *Processor {
+	return New("", nil, &config.AppConfig{
+		NoHtmx: true, // disable HTMX injection to keep test output predictable
+
+	})
+}
+
+func NewVM(ctx ...fiber.Ctx) *Processor {
+	var c fiber.Ctx
+	if len(ctx) > 0 {
+		c = ctx[0]
+	}
+	return New(vmDir, c, vmConfig)
+}
+
+func New(dir string, c fiber.Ctx, appCfg ...*config.AppConfig) *Processor {
 	var registry *require.Registry
+	opts := []require.Option{}
+	var cfg *config.AppConfig
+	if len(appCfg) > 0 && appCfg[0] != nil {
+		cfg = appCfg[0]
+	} else {
+		cfg = vmConfig
+	}
+	if c != nil {
+		opts = append(opts, require.WithInstance(c))
+	}
+	if dir != "" {
+		opts = append(opts, []require.Option{
+			require.WithLoader(func(path string) ([]byte, error) {
+				return os.ReadFile(filepath.Join(dir, path))
+			}),
+			require.WithGlobalFolders("libs", "modules", "js_modules", "node_modules"),
+			require.WithPathResolver(func(base, path string) string {
+				return filepath.Join(base, path)
+			}),
+		}...) // this can be shared by multiple runtimes
+	}
+	registry = require.NewRegistry(opts...) // this can be shared by multiple runtimes
 
-	registry = require.NewRegistry(
-		require.WithInstance(c),
-		require.WithLoader(func(path string) ([]byte, error) {
-			return os.ReadFile(filepath.Join(dir, path))
-		}),
-		require.WithGlobalFolders("libs", "modules", "js_modules", "node_modules"),
-		require.WithPathResolver(func(base, path string) string {
-			return filepath.Join(base, path)
-		}),
-	) // this can be shared by multiple runtimes
+	vm := &Processor{goja.New()}
 
-	vm := goja.New()
-
-	new(coreRequire.Registry).Enable(vm)
-	buffer.Enable(vm)
+	new(coreRequire.Registry).Enable(vm.Runtime)
+	buffer.Enable(vm.Runtime)
 
 	modules.Register(registry) // attache all modules
-	registry.Enable(vm)
-	AttachGlobals(vm)
+	registry.Enable(vm.Runtime)
+	vm.AttachGlobals()
 
 	// Shim process.env
 	process := vm.NewObject()
@@ -166,7 +207,11 @@ func Process(content []byte, dir string, c fiber.Ctx, cfg *config.AppConfig, set
 	reComments := regexp.MustCompile(`(?s)<!--.*?-->`)
 	cleanContent := reComments.ReplaceAll(content, nil)
 
-	processedContent, err := executeJS(vm, string(cleanContent), dir)
+	// Remove Mustache comments
+	reComments = regexp.MustCompile(`(?s){{!.*?}}`)
+	cleanContent = reComments.ReplaceAll(cleanContent, nil)
+
+	processedContent, err := vm.ExecuteJS(string(cleanContent), dir)
 	if err != nil {
 		return nil, err
 	}
@@ -179,7 +224,7 @@ func Process(content []byte, dir string, c fiber.Ctx, cfg *config.AppConfig, set
 		}
 		val := vm.GlobalObject().Get(k)
 		if val != nil {
-			data[k] = exportRecursive(vm, val)
+			data[k] = vm.Export(val)
 		}
 	}
 
@@ -208,7 +253,7 @@ func ProcessString(content string, dir string, c fiber.Ctx, cfg *config.AppConfi
 	reComments := regexp.MustCompile(`(?s)<!--.*?-->`)
 	cleanContent := reComments.ReplaceAllString(content, "")
 
-	processedContent, err := executeJS(vm, cleanContent, dir)
+	processedContent, err := vm.ExecuteJS(cleanContent, dir)
 	if err != nil {
 		return "", err
 	}
@@ -226,7 +271,7 @@ func ProcessString(content string, dir string, c fiber.Ctx, cfg *config.AppConfi
 		}
 		val := vm.GlobalObject().Get(k)
 		if val != nil {
-			data[k] = exportRecursive(vm, val)
+			data[k] = vm.Export(val)
 		}
 	}
 
@@ -256,7 +301,7 @@ func ProcessFile(path string, c fiber.Ctx, cfg *config.AppConfig, settings ...ma
 	reComments := regexp.MustCompile(`(?s)<!--.*?-->`)
 	cleanContent := reComments.ReplaceAllString(string(content), "")
 
-	processedContent, err := executeJS(vm, cleanContent, filepath.Dir(path))
+	processedContent, err := vm.ExecuteJS(cleanContent, filepath.Dir(path))
 	if err != nil {
 		return "", err
 	}
@@ -275,14 +320,14 @@ func ProcessFile(path string, c fiber.Ctx, cfg *config.AppConfig, settings ...ma
 		}
 		val := vm.GlobalObject().Get(k)
 		if val != nil {
-			data[k] = exportRecursive(vm, val)
+			data[k] = vm.Export(val)
 		}
 	}
 
 	// If outputBuffer has content, where does it go?
 	// Usually `print` in `<?js ... ?>` outputs *at the location of the block*?
-	// But our executeJS logic assumes blocks are replaced/removed.
-	// If `print` is used, maybe we should've handled it inside executeJS.
+	// But our ExecuteJS logic assumes blocks are replaced/removed.
+	// If `print` is used, maybe we should've handled it inside ExecuteJS.
 	// Let's assume `print` appends to the buffer, but unless we know WHERE, it's hard.
 	// Simplified: `print` output is prepended or just ignored for now?
 	// User example uses `var title = ...` and then `{{title}}`. This relies on context.
@@ -305,18 +350,18 @@ func ProcessFile(path string, c fiber.Ctx, cfg *config.AppConfig, settings ...ma
 	return injectHTMX(rendered, cfg), nil
 }
 
-func exportRecursive(vm *goja.Runtime, val goja.Value) interface{} {
-	if val == nil || goja.IsUndefined(val) || goja.IsNull(val) || vm == nil {
+func (p *Processor) Export(val goja.Value) interface{} {
+	if val == nil || goja.IsUndefined(val) || goja.IsNull(val) || p.Runtime == nil {
 		return nil
 	}
 
 	// Use JSON.stringify for deep export
-	jsonObj := vm.Get("JSON")
+	jsonObj := p.Get("JSON")
 	if jsonObj == nil || goja.IsUndefined(jsonObj) {
 		return val.Export()
 	}
 
-	stringifyVal := jsonObj.ToObject(vm).Get("stringify")
+	stringifyVal := jsonObj.ToObject(p.Runtime).Get("stringify")
 	if stringifyVal == nil || goja.IsUndefined(stringifyVal) {
 		return val.Export()
 	}
@@ -384,8 +429,8 @@ func injectHTMX(content string, cfg *config.AppConfig) string {
 	return res
 }
 
-// executeJS parses <?js ... ?>, <?= ... ?>, and <script server ...> in sequence
-func executeJS(vm *goja.Runtime, content string, baseDir string) (string, error) {
+// ExecuteJS parses <?js ... ?>, <?= ... ?>, and <script server ...> in sequence
+func (p *Processor) ExecuteJS(content string, baseDir string) (string, error) {
 	// Combined regex to match both PHP-style and <script server> tags
 	// Group 1: PHP type, Group 2: PHP code
 	// Group 3: Script src, Group 4: Script code
@@ -409,14 +454,14 @@ func executeJS(vm *goja.Runtime, content string, baseDir string) (string, error)
 			code := submatches[2]
 
 			if tagType == "=" {
-				val, err := vm.RunString(code)
+				val, err := p.Runtime.RunString(code)
 				if err != nil {
 					errReturn = fmt.Errorf("JS Error in <?= ... ?>: %v", err)
 					return ""
 				}
 				return fmt.Sprint(val.Export())
 			} else {
-				_, err := vm.RunString(code)
+				_, err := p.Runtime.RunString(code)
 				if err != nil {
 					errReturn = fmt.Errorf("JS Error in <?js ... ?>: %v", err)
 					return ""
@@ -442,7 +487,7 @@ func executeJS(vm *goja.Runtime, content string, baseDir string) (string, error)
 					return ""
 				}
 
-				_, err = vm.RunString(string(scriptContent))
+				_, err = p.Runtime.RunString(string(scriptContent))
 				if err != nil {
 					errReturn = fmt.Errorf("JS Error in <script server src=\"%s\">: %v", src, err)
 					return ""
@@ -450,7 +495,7 @@ func executeJS(vm *goja.Runtime, content string, baseDir string) (string, error)
 			}
 
 			if strings.TrimSpace(code) != "" {
-				_, err := vm.RunString(code)
+				_, err := p.Runtime.RunString(code)
 				if err != nil {
 					if jsErr, ok := err.(*goja.Exception); ok {
 						stack := jsErr.Stack()

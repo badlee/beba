@@ -135,28 +135,52 @@ func UnregisterGlobal(name string) {
 	sharedObjectsMu.Unlock()
 }
 
+// AttachGlobals installe tous les SharedObjects dans la VM goja.
+// À appeler dans processor.New() avant tout RunString.
+func AttachGlobals(vm any) {
+	if p, ok := vm.(*Processor); ok {
+		p.AttachGlobals()
+	} else if r, ok := vm.(*goja.Runtime); ok {
+		(&Processor{Runtime: r}).AttachGlobals()
+	}
+}
+
 // Register enregistre une valeur Go à partager avec une seule VM goja.
 // Contrairement à RegisterGlobal, la valeur n'est PAS ajoutée au registre global
 // et ne sera pas visible dans les autres VMs créées ultérieurement.
 // data DOIT être un pointeur vers la valeur à partager.
 //
 // Enregistre un SharedObject directement sur une VM spécifique (usage manuel).
-func Register(vm *goja.Runtime, name string, data interface{}) {
+func Register(vm any, name string, data interface{}) {
+	if p, ok := vm.(*Processor); ok {
+		p.Register(name, data)
+	} else if r, ok := vm.(*goja.Runtime); ok {
+		(&Processor{Runtime: r}).Register(name, data)
+	}
+}
+
+// Register enregistre une valeur Go à partager avec une seule VM goja.
+// Contrairement à RegisterGlobal, la valeur n'est PAS ajoutée au registre global
+// et ne sera pas visible dans les autres VMs créées ultérieurement.
+// data DOIT être un pointeur vers la valeur à partager.
+//
+// Enregistre un SharedObject directement sur une VM spécifique (usage manuel).
+func (vm *Processor) Register(name string, data interface{}) {
 	so := &SharedObject{name: name, data: data}
-	_ = so.attach(vm)
+	_ = so.attach(vm.Runtime)
 }
 
 // AttachGlobals installe tous les SharedObjects dans la VM goja.
 // À appeler dans processor.New() avant tout RunString.
-func AttachGlobals(vm *goja.Runtime) {
+func (vm *Processor) AttachGlobals() {
 	sharedObjectsMu.RLock()
 	defer sharedObjectsMu.RUnlock()
 	for _, so := range sharedObjects {
 		if oi, ok := so.data.(ObjectInitialiser); ok {
-			o := oi.ToJSObject(vm)
+			o := oi.ToJSObject(vm.Runtime)
 			vm.Set(so.name, o)
 		} else {
-			_ = so.attach(vm)
+			_ = so.attach(vm.Runtime)
 		}
 	}
 }

@@ -20,18 +20,22 @@ type SchemaRecord struct {
 }
 
 func (conn *Connection) Model(name string, schema ...interface{}) *Model {
-	conn.mutex.Lock()
-	defer conn.mutex.Unlock()
 	// Cas 1: Récupération d'un model existant (sans schéma)
 	if len(schema) == 0 {
-		if existingModel, exists := conn.models[name]; exists {
+		conn.RLock()
+		existingModel, exists := conn.models[name]
+		if exists {
+			conn.RUnlock()
 			return existingModel
 		}
+		conn.RUnlock()
 
 		// Restaurer depuis persistance
 		restoredModel := conn.restoreModel(name)
 		if restoredModel != nil {
+			conn.Lock()
 			conn.models[name] = restoredModel
+			conn.Unlock()
 			return restoredModel
 		}
 
@@ -39,7 +43,17 @@ func (conn *Connection) Model(name string, schema ...interface{}) *Model {
 	}
 
 	// Cas 2: Création/Remplacement avec schéma
-	schemaDef := schema[0]
+	return conn.model(name, schema[0], true)
+}
+
+func (conn *Connection) CreateModel(name string, schemaDef interface{}) *Model {
+	return conn.model(name, schemaDef, false)
+}
+
+func (conn *Connection) model(name string, schemaDef interface{}, migrate bool) *Model {
+	conn.Lock()
+	defer conn.Unlock()
+
 	var schemaObj *Schema
 
 	// Conversion en objet JS si possible
@@ -81,19 +95,18 @@ func (conn *Connection) Model(name string, schema ...interface{}) *Model {
 				schemaObj = conn.createSchemaFromMap(schemaMap)
 			}
 		}
-	} else {
-		// Cas C: C'est déjà une map Go
-		if schemaMap, ok := schemaDef.(map[string]interface{}); ok {
-			schemaObj = conn.createSchemaFromMap(schemaMap)
-		}
+	} else if s, ok := schemaDef.(*Schema); ok {
+		// Cas C: C'est déjà un objet Schema Go
+		schemaObj = s
+	} else if schemaMap, ok := schemaDef.(map[string]interface{}); ok {
+		// Cas D: C'est déjà une map Go
+		schemaObj = conn.createSchemaFromMap(schemaMap)
 	}
 
 	if schemaObj == nil {
 		return nil
 	}
 
-	// En Mongoose, le schéma passé fait foi. Mais on veut peut-être fusionner.
-	// Pour l'instant, on remplace mais on garde une trace.
 	conn.saveSchema(name, schemaObj)
 
 	model := &Model{
@@ -103,12 +116,29 @@ func (conn *Connection) Model(name string, schema ...interface{}) *Model {
 		conn:   conn,
 	}
 
-	// Auto-migration
-	model.db.Table(name).AutoMigrate(reflect.New(model.createStructType()).Interface())
+	if migrate {
+		t := model.createMigrationType()
+		conn.db.Table(name).AutoMigrate(reflect.New(t).Interface())
+	}
 
 	conn.models[name] = model
 
 	return model
+}
+
+func (conn *Connection) AutoMigrate() error {
+	conn.RLock()
+	defer conn.RUnlock()
+
+	for name, m := range conn.models {
+		t := m.createMigrationType()
+		// Use .Table(name) to force the table name for unnamed structs
+		if err := conn.db.Table(name).AutoMigrate(reflect.New(t).Interface()); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // Méthode pour restaurer un model complet
