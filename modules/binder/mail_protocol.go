@@ -1354,8 +1354,6 @@ func allRecipients(msg MailMessage) []string {
 
 type MailModule struct{}
 
-func init() { modules.RegisterModule(&MailModule{}) }
-
 func (m *MailModule) Name() string { return "mail" }
 func (m *MailModule) Doc() string  { return "Mail module (SMTP, SendGrid, Mailgun, Postmark, REST)" }
 
@@ -1815,3 +1813,5 @@ func toStringSlice(v interface{}) []string {
 	}
 	return []string{fmt.Sprint(v)}
 }
+
+func init() { modules.RegisterModule(&MailModule{}) }

@@ -678,7 +678,14 @@ func NewHTTPDirective(config *DirectiveConfig) *HTTPDirective {
 							}
 							cfg.Settings["exclude"] = r.Args.Get("exclude")
 						}
-						args = append(args, timeoutMiddleware(httpserver.FsRouter(cfg)))
+						h, err := httpserver.FsRouter(cfg)
+						if err != nil {
+							args = append(args, timeoutMiddleware(func(c fiber.Ctx) error {
+								return c.Status(500).SendString("Router Error: " + err.Error())
+							}))
+						} else {
+							args = append(args, timeoutMiddleware(h))
+						}
 					}
 				} else {
 					args = append(args, timeoutMiddleware(func(c fiber.Ctx) error {

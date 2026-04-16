@@ -9,8 +9,7 @@ Le mode **Virtual Host** permet d'héberger plusieurs sites web indépendants su
 - [Activation](#activation)
 - [Architecture Master-Worker](#architecture-master-worker)
 - [Structure des répertoires](#structure-des-répertoires)
-- [Fichier `.vhost`](#fichier-vhost)
-- [Blocs `http` et `https`](#blocs-http-et-https)
+- [Configuration unifiée (.bind)](#configuration-unifiee-bind)
 - [Certificats SSL / TLS](#certificats-ssl--tls)
 - [Sockets transparents](#sockets-transparents)
 - [Propagation des flags](#propagation-des-flags)
@@ -64,14 +63,14 @@ Le master transmet la requête complète au worker via `fasthttp.Client` (proxy)
 ```
 vhosts/                          # Répertoire racine (passé en argument)
 ├── site-a.local/                # Un site = un dossier
-│   ├── .vhost                   # Configuration HCL (optionnel)
+│   ├── .vhost.bind              # Configuration unifiée (recommandé)
 │   ├── index.html               # Contenu du site
 │   └── ...
 ├── site-b.local/
-│   ├── .vhost
+│   ├── .vhost                   # Équivalent à .vhost.bind
 │   └── ...
 └── api.internal/
-    ├── .vhost
+    ├── .vhost.bind
     └── ...
 ```
 
@@ -79,6 +78,7 @@ vhosts/                          # Répertoire racine (passé en argument)
 - Seuls les **dossiers** sont scannés (les fichiers à la racine sont ignorés)
 - Chaque dossier = un vhost
 - Sans fichier `.vhost`, le **nom du dossier** est utilisé comme hostname
+- Sans fichier `.vhost` ou `.vhost.bind`, le **nom du dossier** est utilisé comme hostname
 - Chaque worker effectue un `chdir` dans son dossier avant de servir
 
 ### Routage puissant avec FsRouter
@@ -95,123 +95,62 @@ Chaque virtual host utilise nativement le système **FsRouter**. Cela signifie q
 
 ---
 
-## Fichier `.vhost`
+## Configuration unifiée (.bind)
 
-Le fichier `.vhost` utilise la syntaxe **HCL** (HashiCorp Configuration Language) pour configurer le vhost.
+Le fichier de configuration (`.vhost` ou `.vhost.bind`) utilise la syntaxe **Binder**.
 
-### Champs disponibles
+### Mots-clés disponibles
 
-| Champ | Type | Description |
-|---|---|---|
-| `domain` | `string` | Nom de domaine principal (remplace le nom du dossier) |
-| `aliases` | `list(string)` | Noms de domaine alternatifs |
-| `port` | `int` | Port d'écoute (si aucun bloc `http`/`https` n'est défini) |
-| `cert` | `string` | Chemin du certificat SSL (active HTTPS si `key` est aussi défini) |
-| `key` | `string` | Chemin de la clé privée SSL |
-| `email` | `string` | Email global Let's Encrypt pour les notifications |
-| `http { }` | block | Bloc listener HTTP |
-| `https { }` | block | Bloc listener HTTPS |
-| `listen { }` | block | Bloc listener générique (répétable) |
+| Mot-clé | Description |
+|---|---|
+| `DOMAIN` | Nom de domaine principal (remplace le nom du dossier) |
+| `ALIAS` | Nom de domaine alternatif (un seul) |
+| `ALIASES` | Noms de domaine alternatifs (séparés par des virgules) |
+| `PORT` | Port d'écoute spécifique pour ce bloc |
+| `SSL` | `SSL cert.pem key.pem` (active HTTPS) |
+| `EMAIL` | Email Let's Encrypt pour les notifications |
 
 ### Exemple minimal
 
-```hcl
-# .vhost — le dossier "example.com/" contient ce fichier
-domain  = "example.com"
-aliases = ["www.example.com"]
+```bind
+HTTP ":80"
+  DOMAIN "example.com"
+  ALIAS "www.example.com"
+END HTTP
 ```
 
-Le vhost écoute sur le port par défaut (celui du master, `--port`), protocole HTTP.
+Le vhost écoute sur le port 80, protocole HTTP.
 
-### Exemple avec port custom
+### Exemple HTTPS (Let's Encrypt)
 
-```hcl
-domain = "api.local"
-port   = 9000
+```bind
+HTTPS ":443"
+  DOMAIN "example.com"
+  EMAIL "admin@example.com"
+END HTTPS
 ```
 
-### Exemple avec certificats (auto-détection HTTPS)
+Si `SSL` est omis dans un bloc `HTTPS`, le serveur tente d'obtenir un certificat via Let's Encrypt.
 
-```hcl
-domain = "secure.local"
-cert   = "/etc/ssl/secure.local.pem"
-key    = "/etc/ssl/secure.local.key"
+### Exemple avec Certificats manuels
+
+```bind
+HTTPS ":443"
+  DOMAIN "secure.local"
+  SSL "/etc/ssl/cert.pem" "/etc/ssl/key.pem"
+END HTTPS
 ```
 
-Si `cert` et `key` sont définis mais qu'aucun bloc `http`/`https` n'est présent, le protocole passe automatiquement en **HTTPS**.
+### Exemple Multi-Protocoles
 
----
+```bind
+HTTP ":80"
+  DOMAIN "multi.local"
+END HTTP
 
-## Blocs `http` et `https`
-
-Les blocs `http` et `https` permettent de configurer des listeners dédiés.
-
-### Champs des blocs
-
-| Champ | Type | Description |
-|---|---|---|
-| `port` | `int` | Port d'écoute (défaut: 80 pour `http`, 443 pour `https`) |
-| `socket` | `string` | Chemin vers un Unix socket public (optionnel) |
-
-### HTTP seul
-
-```hcl
-domain = "app.local"
-
-http {
-  port = 8080
-}
-```
-
-### HTTP + HTTPS (Let's Encrypt)
-Si les champs `cert` et `key` sont omis, le serveur tentera d'obtenir automatiquement un certificat SSL gratuit via **Let's Encrypt** pour les domaines listés dans `domain` et `aliases`. Le champ `email` facultatif permet de lier le compte Let's Encrypt à cette adresse pour recevoir des notifications d'expiration.
-
-```hcl
-domain = "example.com"
-email  = "admin@example.com"
-
-http {
-  port = 80
-}
-
-https {
-  port = 443
-}
-```
-
-### HTTP + HTTPS dual
-
-```hcl
-domain  = "mysite.com"
-aliases = ["www.mysite.com"]
-cert    = "/etc/letsencrypt/live/mysite.com/fullchain.pem"
-key     = "/etc/letsencrypt/live/mysite.com/privkey.pem"
-
-http {
-  port = 80
-}
-
-https {
-  port = 443
-}
-```
-
-### Bloc `listen` générique
-
-Le bloc `listen` peut être utilisé à la place de ou en complément de `http`/`https`. Il est **répétable**.
-
-```hcl
-domain = "multi.local"
-
-listen {
-  port = 8080
-  # protocol absent → défaut "http"
-}
-
-listen {
-  port = 9090
-}
-```
+TCP ":9090"
+  # Pas de domaine requis pour TCP brut, routage par port
+END TCP
 
 ---
 
@@ -246,12 +185,12 @@ La résolution SNI et le routage ACME (`/.well-known/acme-challenge/`) assurent 
 
 ## Sockets transparents
 
-Le champ `socket` dans les blocs `http`/`https` permet d'écouter sur un socket fichier au lieu d'un port TCP.
+Le champ `SOCKET` (à venir) permettra d'écouter sur un socket fichier.
 
-```hcl
-http {
-  socket = "/var/run/myapp.sock"
-}
+```bind
+HTTP ":8080"
+  # SOCKET "/var/run/myapp.sock"
+END HTTP
 ```
 
 Le comportement est transparent cross-platform :
@@ -300,11 +239,10 @@ Le master gère le cycle de vie :
 # Créer la structure
 mkdir -p vhosts/mon-site.local
 echo '<h1>Mon Site</h1>' > vhosts/mon-site.local/index.html
-cat > vhosts/mon-site.local/.vhost << 'EOF'
-domain = "mon-site.local"
-http {
-  port = 8080
-}
+cat > vhosts/mon-site.local/.vhost.bind << 'EOF'
+HTTP
+  DOMAIN "mon-site.local"
+END HTTP
 EOF
 
 # Lancer
@@ -323,10 +261,10 @@ curl -H "Host: mon-site.local" http://localhost:8080/
 ```
 sites/
 ├── blog.example.com/
-│   ├── .vhost          # domain = "blog.example.com"
+│   ├── .vhost.bind     # DOMAIN "blog.example.com"
 │   └── index.html
 ├── shop.example.com/
-│   ├── .vhost          # domain = "shop.example.com"
+│   ├── .vhost          # DOMAIN "shop.example.com"
 │   └── index.html
 └── docs.example.com/
     └── index.html      # Pas de .vhost → hostname = "docs.example.com"
@@ -334,22 +272,16 @@ sites/
 
 ### Production HTTPS multi-domaines
 
-```hcl
-# sites/app.example.com/.vhost
-domain  = "app.example.com"
-aliases = ["www.example.com"]
-
-http {
-  port = 80
-}
-
-https {
-  port = 443
-  # autocert Let's Encrypt
-}
+```bind
+# sites/app.example.com/.vhost.bind
+HTTPS ":443"
+  DOMAIN "app.example.com"
+  ALIASES "www.example.com"
+  EMAIL "admin@example.com"
+END HTTPS
 ```
 
 Voir aussi : [examples/vhosts/](../examples/vhosts/) pour des exemples fonctionnels.
 
 ---
-*Dernière mise à jour : 18 Mars 2026*
+*Dernière mise à jour : 16 Avril 2026*

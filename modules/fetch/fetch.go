@@ -28,16 +28,19 @@ func (m *Module) Doc() string {
 	return "Standard Web fetch() API for HTTP(s) and local file resources"
 }
 
+// ToJSObject exposes the module as a SharedObject (processor.RegisterGlobal).
 func (m *Module) ToJSObject(vm *goja.Runtime) goja.Value {
-	if m.client == nil {
-		m.client = &http.Client{Timeout: 30 * time.Second}
-	}
-	return vm.ToValue(m.fetchFn(vm))
+	obj := vm.NewObject()
+	m.Loader(nil, vm, obj)
+	return obj.Get("exports")
 }
 
 func (m *Module) Loader(_ any, vm *goja.Runtime, moduleObject *goja.Object) {
+	if m.client == nil {
+		m.client = &http.Client{Timeout: 30 * time.Second}
+	}
 	// Also explicitly set fetch into the VM in case loader logic targets exports instead
-	vm.Set("fetch", m.ToJSObject(vm))
+	moduleObject.Set("exports", m.ToJSObject(vm))
 }
 
 func (m *Module) fetchFn(vm *goja.Runtime) func(call goja.FunctionCall) goja.Value {
@@ -84,7 +87,7 @@ func (m *Module) fetchFn(vm *goja.Runtime) func(call goja.FunctionCall) goja.Val
 		// Javascript execution under Proxy Handlers runs inside separate thread Goroutines but often lacks
 		// the heavy native Node.js EventLoop required for seamless async background suspension, so we run the
 		// network IO synchronously but bind it strictly inside JS Promise syntaxes for full JS thread continuity:
-		
+
 		isFetchRemote := strings.HasPrefix(targetURL, "http://") || strings.HasPrefix(targetURL, "https://")
 		if !isFetchRemote {
 			// Restricted to file processing natively

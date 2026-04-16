@@ -52,7 +52,12 @@ func newRouter(t *testing.T, root string, opts ...func(*RouterConfig)) *fiber.Ap
 	for _, fn := range opts {
 		fn(&cfg)
 	}
-	app.Use(FsRouter(cfg))
+
+	h, err := FsRouter(cfg)
+	if err != nil {
+		t.Fatalf("FsRouter failed: %v", err)
+	}
+	app.Use(h)
 	return app
 }
 

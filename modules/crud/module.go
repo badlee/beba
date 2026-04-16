@@ -22,22 +22,6 @@ import (
 	"http-server/modules/sse"
 )
 
-func init() {
-	// Wire bcrypt helpers used in auth.go and routes.go
-	bcryptCompare = func(hashed, plain string) bool {
-		return bcrypt.CompareHashAndPassword([]byte(hashed), []byte(plain)) == nil
-	}
-	bcryptHash = func(plain string) string {
-		b, err := bcrypt.GenerateFromPassword([]byte(plain), bcrypt.DefaultCost)
-		if err != nil {
-			return plain
-		}
-		return string(b)
-	}
-
-	modules.RegisterModule(&CrudModule{})
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // CrudInstance — one running CRUD directive
 // ─────────────────────────────────────────────────────────────────────────────
@@ -986,4 +970,20 @@ func mapStrVal(m map[string]interface{}, key string) string {
 		return fmt.Sprint(v)
 	}
 	return ""
+}
+
+func init() {
+	// Wire bcrypt helpers used in auth.go and routes.go
+	bcryptCompare = func(hashed, plain string) bool {
+		return bcrypt.CompareHashAndPassword([]byte(hashed), []byte(plain)) == nil
+	}
+	bcryptHash = func(plain string) string {
+		b, err := bcrypt.GenerateFromPassword([]byte(plain), bcrypt.DefaultCost)
+		if err != nil {
+			return plain
+		}
+		return string(b)
+	}
+
+	modules.RegisterModule(&CrudModule{})
 }

@@ -29,10 +29,6 @@ func (f *FakeCookiesCtx) Cookie(cookie *fiber.Cookie) *fiber.Cookie {
 func (f *FakeCookiesCtx) ClearCookie(key string, path ...string) {
 }
 
-func init() {
-	modules.RegisterModule(&Module{})
-}
-
 func (s *Module) Name() string {
 	return "cookies"
 }
@@ -41,6 +37,12 @@ func (s *Module) Doc() string {
 	return "Cookies module"
 }
 
+// ToJSObject exposes the module as a SharedObject (processor.RegisterGlobal).
+func (m *Module) ToJSObject(vm *goja.Runtime) goja.Value {
+	obj := vm.NewObject()
+	m.Loader(nil, vm, obj)
+	return obj
+}
 func (s *Module) Loader(c any, vm *goja.Runtime, moduleObject *goja.Object) {
 	// CommonJS support: if exports exists, use it as the target
 	module := moduleObject
@@ -77,4 +79,8 @@ func (s *Module) Loader(c any, vm *goja.Runtime, moduleObject *goja.Object) {
 		key := call.Argument(0).String()
 		return vm.ToValue(ctx.Cookies(key) != "")
 	})
+}
+
+func init() {
+	modules.RegisterModule(&Module{})
 }

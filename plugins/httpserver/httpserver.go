@@ -73,7 +73,9 @@ func RegisterOnApp(appHandler AppHandler) {
 type HTTP struct {
 	*fiber.App
 	*Config
-	GeoDB *geoip2.Reader
+	GeoDB      *geoip2.Reader
+	starupFn   map[string][]func() error
+	shutdownFn map[string][]func() error
 }
 
 // Config holds optional overrides for the app factory.
@@ -149,7 +151,9 @@ func New(cfg Config) *HTTP {
 				return c.Status(code).SendString("Internal Server Error")
 			},
 		}),
-		Config: &cfg,
+		Config:     &cfg,
+		starupFn:   make(map[string][]func() error),
+		shutdownFn: make(map[string][]func() error),
 	}
 
 	// Recover middleware
@@ -371,6 +375,13 @@ func (app *HTTP) Panic() *zerolog.Event {
 	return app.stderrLogger.Panic()
 }
 
+func (app *HTTP) RegisterOnShutdown(tag string, f func() error) {
+	app.shutdownFn[tag] = append(app.shutdownFn[tag], f)
+}
+func (app *HTTP) RegisterOnStartup(tag string, f func() error) {
+	app.starupFn[tag] = append(app.starupFn[tag], f)
+}
+
 func (app *HTTP) Listen(addr string, config ...fiber.ListenConfig) error {
 	c := fiber.ListenConfig{DisableStartupMessage: true}
 	if len(config) > 0 {
@@ -400,10 +411,48 @@ func (app *HTTP) Listen(addr string, config ...fiber.ListenConfig) error {
 			a.Add([]string{route.Method}, route.Path, route.Handlers[0], route.Handlers[1:]...)
 		}
 		app.Info().Str("addr", addr).Msg("Server started")
+		for tag, fns := range app.starupFn {
+			for _, f := range fns {
+				if err := f(); err != nil {
+					app.Error().Str("tag", tag).Err(err).Msg("Startup function failed")
+				}
+			}
+		}
 		if origBefore != nil {
 			return origBefore(a)
 		}
 		return nil
 	}
+	defer func() {
+		defer func() {
+			if e := recover(); e != nil {
+				var err error
+				if e2, ok := e.(error); ok {
+					err = e2
+				} else {
+					err = fmt.Errorf("%v", e)
+				}
+				app.Error().Err(err).Msg("Servic Panic during shutdown")
+			}
+		}()
+		app.Info().Msg("Server shutting down")
+		// recover from panic
+		if e := recover(); e != nil {
+			var err error
+			if e2, ok := e.(error); ok {
+				err = e2
+			} else {
+				err = fmt.Errorf("%v", e)
+			}
+			app.Error().Err(err).Msg("Server Close After Panic")
+		}
+		for tag, fns := range app.shutdownFn {
+			for _, f := range fns {
+				if err := f(); err != nil {
+					app.Error().Str("tag", tag).Err(err).Msg("Shutdown function failed")
+				}
+			}
+		}
+	}()
 	return app.App.Listen(addr, c)
 }

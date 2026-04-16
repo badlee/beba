@@ -9,15 +9,15 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 )
+
 // --------------------------------------------------------------------------
 // scanVhosts
 // --------------------------------------------------------------------------
 
-// helper : crée un vhost subfolder avec un fichier .vhost.bind (modern) ou .vhost (legacy).
+// helper : crée un vhost subfolder avec un fichier .vhost.bind.
 func mkVhost(t *testing.T, base, name, vhostContent string) {
 	t.Helper()
 	dir := filepath.Join(base, name)
@@ -26,10 +26,6 @@ func mkVhost(t *testing.T, base, name, vhostContent string) {
 	}
 	if vhostContent != "" {
 		filename := ".vhost.bind"
-		// If it looks like legacy HCL, use .vhost
-		if strings.Contains(vhostContent, "=") && !strings.Contains(vhostContent, "HTTP") {
-			filename = ".vhost"
-		}
 		if err := os.WriteFile(filepath.Join(dir, filename), []byte(vhostContent), 0644); err != nil {
 			t.Fatal(err)
 		}
@@ -69,8 +65,8 @@ func TestScanVhosts_WithDomainAndAliases(t *testing.T) {
 	tmp := t.TempDir()
 	mkVhost(t, tmp, "site-a", `HTTP example.com
   DOMAIN example.com
-  ALIASES www.example.com
-  ALIASES ex.com
+  ALIAS www.example.com
+  ALIAS ex.com
 END HTTP`)
 
 	vhosts, err := scanVhosts(tmp, 8080)
@@ -140,6 +136,27 @@ END HTTPS`)
 	}
 	if v.Email != "admin@secure.local" {
 		t.Errorf("expected email 'admin@secure.local', got %q", v.Email)
+	}
+}
+
+func TestScanVhosts_Alias(t *testing.T) {
+	tmp := t.TempDir()
+	mkVhost(t, tmp, "alias-test", `HTTP alias.local
+  DOMAIN alias.local
+  ALIAS sub.alias.local
+  ALIAS other.local
+END HTTP`)
+
+	vhosts, err := scanVhosts(tmp, 8080)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := vhosts[0]
+	if len(v.Aliases) != 2 {
+		t.Fatalf("expected 2 aliases, got %d", len(v.Aliases))
+	}
+	if v.Aliases[0] != "sub.alias.local" || v.Aliases[1] != "other.local" {
+		t.Errorf("unexpected aliases: %v", v.Aliases)
 	}
 }
 
@@ -290,11 +307,11 @@ END HTTPS`)
 func TestScanVhosts_MultipleVHostBind(t *testing.T) {
 	tmp := t.TempDir()
 	mkVhost(t, tmp, "site1", "HTTP site1.local\n  GET / FILE ./site1\nEND HTTP")
-	// Also test that .vhost.bind is preferred over .vhost (which is empty here)
+	// Test that .vhost.bind is preferred over .vhost (both using Binder syntax)
 	dir2 := filepath.Join(tmp, "site2")
 	os.MkdirAll(dir2, 0755)
 	os.WriteFile(filepath.Join(dir2, ".vhost.bind"), []byte("HTTP site2.local\n  GET / FILE ./site2\nEND HTTP"), 0644)
-	os.WriteFile(filepath.Join(dir2, ".vhost"), []byte("domain = \"wrong.local\""), 0644)
+	os.WriteFile(filepath.Join(dir2, ".vhost"), []byte("HTTP wrong.local\nEND HTTP"), 0644)
 
 	vhosts, err := scanVhosts(tmp, 8080)
 	if err != nil {
@@ -303,7 +320,7 @@ func TestScanVhosts_MultipleVHostBind(t *testing.T) {
 	if len(vhosts) != 2 {
 		t.Fatalf("expected 2 vhosts, got %d", len(vhosts))
 	}
-	
+
 	domains := map[string]bool{}
 	for _, v := range vhosts {
 		domains[v.Domain] = true
@@ -360,7 +377,7 @@ func TestUDPProxy_BiDirectional(t *testing.T) {
 			if err != nil {
 				return
 			}
-			
+
 			// Try to decode as IPC request
 			var req struct {
 				Proto string `json:"proto"`
@@ -384,7 +401,7 @@ func TestUDPProxy_BiDirectional(t *testing.T) {
 	// We'll use a fixed port for simplicity in this test
 	proxyPort := 9999
 	workers := map[string]string{"test.local": sockPath}
-	
+
 	// Start proxy in background
 	go func() {
 		_ = runUDPProxy(proxyPort, workers, cfg)
@@ -696,4 +713,3 @@ func TestScanVhosts_AllDirsEnumerated(t *testing.T) {
 		}
 	}
 }
-

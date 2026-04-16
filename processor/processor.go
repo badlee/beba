@@ -35,6 +35,7 @@ func SetVMDir(dir string) {
 
 type Processor struct {
 	*goja.Runtime
+	initialized bool
 }
 
 func NewEmpty() *Processor {
@@ -54,6 +55,7 @@ func NewVM(ctx ...fiber.Ctx) *Processor {
 
 func New(dir string, c fiber.Ctx, appCfg ...*config.AppConfig) *Processor {
 	var registry *require.Registry
+	vm := &Processor{goja.New(), false}
 	opts := []require.Option{}
 	var cfg *config.AppConfig
 	if len(appCfg) > 0 && appCfg[0] != nil {
@@ -77,26 +79,12 @@ func New(dir string, c fiber.Ctx, appCfg ...*config.AppConfig) *Processor {
 	}
 	registry = require.NewRegistry(opts...) // this can be shared by multiple runtimes
 
-	vm := &Processor{goja.New()}
-
 	new(coreRequire.Registry).Enable(vm.Runtime)
 	buffer.Enable(vm.Runtime)
+	registry.Enable(vm.Runtime)
 
 	modules.Register(registry) // attache all modules
-	registry.Enable(vm.Runtime)
 	vm.AttachGlobals()
-
-	// Shim process.env
-	process := vm.NewObject()
-	env := vm.NewObject()
-	for _, e := range os.Environ() {
-		pair := strings.SplitN(e, "=", 2)
-		if len(pair) == 2 {
-			env.Set(pair[0], pair[1])
-		}
-	}
-	process.Set("env", env)
-	vm.Set("process", process)
 
 	// Capture print output if needed?
 	// For parity with some PHP-like envs, print output goes to output.
@@ -114,7 +102,7 @@ func New(dir string, c fiber.Ctx, appCfg ...*config.AppConfig) *Processor {
 		outputBuffer.WriteString("\n")
 		// Also print to stdout for debugging/logs if not a standard fiber request
 		// (standard fiber requests use outputBuffer for template injection)
-		fmt.Println(out)
+		println(out)
 		return goja.Undefined()
 	})
 	vm.Set("__output", func() string {
@@ -192,43 +180,7 @@ func New(dir string, c fiber.Ctx, appCfg ...*config.AppConfig) *Processor {
 // ProcessString renders a template string with embedded JS and Mustache.
 // settings (optional) will be injected as the global `settings` object.
 func Process(content []byte, dir string, c fiber.Ctx, cfg *config.AppConfig, settings ...map[string]string) ([]byte, error) {
-	vm := New(dir, c, cfg)
-
-	// Inject settings if provided
-	if len(settings) > 0 && settings[0] != nil {
-		settingsObj := vm.NewObject()
-		for k, v := range settings[0] {
-			settingsObj.Set(k, v)
-		}
-		vm.Set("settings", settingsObj)
-	}
-
-	// Remove HTML comments
-	reComments := regexp.MustCompile(`(?s)<!--.*?-->`)
-	cleanContent := reComments.ReplaceAll(content, nil)
-
-	// Remove Mustache comments
-	reComments = regexp.MustCompile(`(?s){{!.*?}}`)
-	cleanContent = reComments.ReplaceAll(cleanContent, nil)
-
-	processedContent, err := vm.ExecuteJS(string(cleanContent), dir)
-	if err != nil {
-		return nil, err
-	}
-
-	// Prepare context for Mustache
-	data := make(map[string]interface{})
-	for _, k := range vm.GlobalObject().Keys() {
-		if k == "db" || k == "require" || k == "console" || k == "sse" || k == "include" || k == "print" || k == "settings" || k == "config" {
-			continue
-		}
-		val := vm.GlobalObject().Get(k)
-		if val != nil {
-			data[k] = vm.Export(val)
-		}
-	}
-
-	res, err := mustache.Render(processedContent, data)
+	res, err := ProcessString(string(content), dir, c, cfg, settings...)
 	if err != nil {
 		return nil, err
 	}
@@ -249,11 +201,7 @@ func ProcessString(content string, dir string, c fiber.Ctx, cfg *config.AppConfi
 		vm.Set("settings", settingsObj)
 	}
 
-	// Remove HTML comments
-	reComments := regexp.MustCompile(`(?s)<!--.*?-->`)
-	cleanContent := reComments.ReplaceAllString(content, "")
-
-	processedContent, err := vm.ExecuteJS(cleanContent, dir)
+	processedContent, err := vm.ExecuteJS(content, dir)
 	if err != nil {
 		return "", err
 	}
@@ -266,55 +214,6 @@ func ProcessString(content string, dir string, c fiber.Ctx, cfg *config.AppConfi
 		}
 	}
 	for _, k := range vm.GlobalObject().Keys() {
-		if k == "db" || k == "require" || k == "console" || k == "sse" || k == "include" || k == "print" || k == "settings" || k == "config" {
-			continue
-		}
-		val := vm.GlobalObject().Get(k)
-		if val != nil {
-			data[k] = vm.Export(val)
-		}
-	}
-
-	return mustache.Render(processedContent, data)
-}
-
-// ProcessFile reads a file, executes embedded JS, and renders Mustache
-func ProcessFile(path string, c fiber.Ctx, cfg *config.AppConfig, settings ...map[string]string) (string, error) {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	dir := filepath.Dir(path)
-
-	vm := New(dir, c, cfg)
-
-	// Inject settings if provided
-	if len(settings) > 0 && settings[0] != nil {
-		settingsObj := vm.NewObject()
-		for k, v := range settings[0] {
-			settingsObj.Set(k, v)
-		}
-		vm.Set("settings", settingsObj)
-	}
-
-	// Remove HTML comments before processing
-	reComments := regexp.MustCompile(`(?s)<!--.*?-->`)
-	cleanContent := reComments.ReplaceAllString(string(content), "")
-
-	processedContent, err := vm.ExecuteJS(cleanContent, filepath.Dir(path))
-	if err != nil {
-		return "", err
-	}
-
-	// Prepare context for Mustache
-	data := make(map[string]interface{})
-	if len(settings) > 0 {
-		for k, v := range settings[0] {
-			data[k] = v
-		}
-	}
-	for _, k := range vm.GlobalObject().Keys() {
-		// Skip known modules/internals to avoid stringify issues
 		if k == "db" || k == "require" || k == "console" || k == "sse" || k == "include" || k == "print" || k == "settings" || k == "config" {
 			continue
 		}
@@ -336,18 +235,33 @@ func ProcessFile(path string, c fiber.Ctx, cfg *config.AppConfig, settings ...ma
 
 	// Provider for partials
 	// Looking in the file's directory
-	provider := &mustache.FileProvider{
-		Paths:      []string{filepath.Dir(path)},
-		Extensions: []string{".html", ".mustache", ".tmpl", ".htm"},
-	}
+	var rendered string
+	if dir != "" {
+		provider := &mustache.FileProvider{
+			Paths:      []string{dir},
+			Extensions: []string{".html", ".mustache", ".tmpl", ".htm"},
+		}
 
-	rendered, err := mustache.RenderPartials(processedContent, provider, data)
-	if err != nil {
-		return "", err
+		rendered, err = mustache.RenderPartials(processedContent, provider, data)
+		if err != nil {
+			return "", err
+		}
+	} else {
+		rendered, err = mustache.Render(processedContent, data)
 	}
 
 	// Final step: Inject HTMX if it's a full HTML document
 	return injectHTMX(rendered, cfg), nil
+}
+
+// ProcessFile reads a file, executes embedded JS, and renders Mustache
+func ProcessFile(path string, c fiber.Ctx, cfg *config.AppConfig, settings ...map[string]string) (string, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Dir(path)
+	return ProcessString(string(content), dir, c, cfg, settings...)
 }
 
 func (p *Processor) Export(val goja.Value) interface{} {
@@ -429,8 +343,46 @@ func injectHTMX(content string, cfg *config.AppConfig) string {
 	return res
 }
 
+func (p *Processor) ExecuteFile(filePath string) (string, error) {
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return "", err
+	}
+	return p.ExecuteJS(string(content), filepath.Dir(filePath), true)
+}
+
 // ExecuteJS parses <?js ... ?>, <?= ... ?>, and <script server ...> in sequence
-func (p *Processor) ExecuteJS(content string, baseDir string) (string, error) {
+func (p *Processor) ExecuteJS(content string, baseDir string, isNotATemplate ...bool) (string, error) {
+	isJsScript := false
+	if len(isNotATemplate) > 0 {
+		isJsScript = isNotATemplate[0]
+	}
+	if isJsScript {
+		val, err := p.RunString(content)
+		if err != nil {
+			return "", fmt.Errorf("JS Error in <?= ... ?>: %v", err)
+		}
+		jsonObj := p.Get("JSON").ToObject(p.Runtime)
+		stringify := jsonObj.Get("stringify")
+		stringifyFn, ok := goja.AssertFunction(stringify)
+		if !ok {
+			return "", fmt.Errorf("stringify is not a function in script")
+		}
+		res, err := stringifyFn(goja.Undefined(), val)
+		if err != nil {
+			return "", err
+		}
+		return res.String(), nil
+	}
+
+	// Remove HTML comments
+	reComments := regexp.MustCompile(`(?s)<!--.*?-->`)
+	content = reComments.ReplaceAllString(content, "")
+
+	// Remove Mustache comments
+	reComments = regexp.MustCompile(`(?s){{!.*?}}`)
+	content = reComments.ReplaceAllString(content, "")
+
 	// Combined regex to match both PHP-style and <script server> tags
 	// Group 1: PHP type, Group 2: PHP code
 	// Group 3: Script src, Group 4: Script code
@@ -454,14 +406,14 @@ func (p *Processor) ExecuteJS(content string, baseDir string) (string, error) {
 			code := submatches[2]
 
 			if tagType == "=" {
-				val, err := p.Runtime.RunString(code)
+				val, err := p.RunString(code)
 				if err != nil {
 					errReturn = fmt.Errorf("JS Error in <?= ... ?>: %v", err)
 					return ""
 				}
 				return fmt.Sprint(val.Export())
 			} else {
-				_, err := p.Runtime.RunString(code)
+				_, err := p.RunString(code)
 				if err != nil {
 					errReturn = fmt.Errorf("JS Error in <?js ... ?>: %v", err)
 					return ""

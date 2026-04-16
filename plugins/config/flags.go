@@ -97,8 +97,8 @@ func ParseFlags() (*AppConfig, error) {
 
 func parseFlagsArgs(args []string) (*AppConfig, error) {
 	cfg := &AppConfig{}
-	fs := pflag.NewFlagSet("http-server", pflag.ContinueOnError)
-	fs.Usage = func() {} // On gère l'affichage nous-mêmes
+	flagSet := pflag.NewFlagSet("http-server", pflag.ContinueOnError)
+	flagSet.Usage = func() {} // On gère l'affichage nous-mêmes
 
 	// durRefs : champs time.Duration — flag int intermédiaire à convertir post-parse
 	type durRef struct {
@@ -135,26 +135,26 @@ func parseFlagsArgs(args []string) (*AppConfig, error) {
 		case reflect.String:
 			p := fval.Addr().Interface().(*string)
 			if meta.short != "" {
-				fs.StringVarP(p, meta.long, meta.short, meta.def, meta.desc)
+				flagSet.StringVarP(p, meta.long, meta.short, meta.def, meta.desc)
 			} else {
-				fs.StringVar(p, meta.long, meta.def, meta.desc)
+				flagSet.StringVar(p, meta.long, meta.def, meta.desc)
 			}
 
 		case reflect.Bool:
 			p := fval.Addr().Interface().(*bool)
 			def := meta.def == "true"
 			if meta.short != "" {
-				fs.BoolVarP(p, meta.long, meta.short, def, meta.desc)
+				flagSet.BoolVarP(p, meta.long, meta.short, def, meta.desc)
 			} else {
-				fs.BoolVar(p, meta.long, def, meta.desc)
+				flagSet.BoolVar(p, meta.long, def, meta.desc)
 			}
 
 			// Support --no- prefix for flags not starting with "no-"
 			if !strings.HasPrefix(meta.long, "no-") {
 				negName := "no-" + meta.long
 				negPtr := new(bool)
-				fs.BoolVar(negPtr, negName, false, "Disable "+meta.long)
-				_ = fs.MarkHidden(negName)
+				flagSet.BoolVar(negPtr, negName, false, "Disable "+meta.long)
+				_ = flagSet.MarkHidden(negName)
 				negRefs = append(negRefs, negRef{
 					fieldIdx: i,
 					posName:  meta.long,
@@ -167,9 +167,9 @@ func parseFlagsArgs(args []string) (*AppConfig, error) {
 			p := fval.Addr().Interface().(*int)
 			def, _ := strconv.Atoi(meta.def)
 			if meta.short != "" {
-				fs.IntVarP(p, meta.long, meta.short, def, meta.desc)
+				flagSet.IntVarP(p, meta.long, meta.short, def, meta.desc)
 			} else {
-				fs.IntVar(p, meta.long, def, meta.desc)
+				flagSet.IntVar(p, meta.long, def, meta.desc)
 			}
 
 		case reflect.Int64:
@@ -178,9 +178,9 @@ func parseFlagsArgs(args []string) (*AppConfig, error) {
 				n := new(int)
 				def, _ := strconv.Atoi(meta.def)
 				if meta.short != "" {
-					fs.IntVarP(n, meta.long, meta.short, def, meta.desc)
+					flagSet.IntVarP(n, meta.long, meta.short, def, meta.desc)
 				} else {
-					fs.IntVar(n, meta.long, def, meta.desc)
+					flagSet.IntVar(n, meta.long, def, meta.desc)
 				}
 				durRefs = append(durRefs, durRef{
 					fieldIdx: i,
@@ -191,9 +191,9 @@ func parseFlagsArgs(args []string) (*AppConfig, error) {
 				p := fval.Addr().Interface().(*int64)
 				def, _ := strconv.ParseInt(meta.def, 10, 64)
 				if meta.short != "" {
-					fs.Int64VarP(p, meta.long, meta.short, def, meta.desc)
+					flagSet.Int64VarP(p, meta.long, meta.short, def, meta.desc)
 				} else {
-					fs.Int64Var(p, meta.long, def, meta.desc)
+					flagSet.Int64Var(p, meta.long, def, meta.desc)
 				}
 			}
 
@@ -207,18 +207,18 @@ func parseFlagsArgs(args []string) (*AppConfig, error) {
 					}
 				}
 				if meta.short != "" {
-					fs.StringSliceVarP(p, meta.long, meta.short, def, meta.desc)
+					flagSet.StringSliceVarP(p, meta.long, meta.short, def, meta.desc)
 				} else {
-					fs.StringSliceVar(p, meta.long, def, meta.desc)
+					flagSet.StringSliceVar(p, meta.long, def, meta.desc)
 				}
 			}
 		}
 	}
 
 	// ---- Flag --help / -? ----
-	help := fs.BoolP("help", "?", false, "Print this list and exit")
+	help := flagSet.BoolP("help", "?", false, "Print this list and exit")
 
-	if err := fs.Parse(args); err != nil {
+	if err := flagSet.Parse(args); err != nil {
 		return nil, err
 	}
 
@@ -235,7 +235,7 @@ func parseFlagsArgs(args []string) (*AppConfig, error) {
 		}
 		fmt.Printf("Usage: %s [path] [options]\n", executable)
 		fmt.Printf("       %s test [file] [options]\n\nOptions:\n", executable)
-		fs.PrintDefaults()
+		flagSet.PrintDefaults()
 		os.Exit(0)
 	}
 
@@ -245,7 +245,7 @@ func parseFlagsArgs(args []string) (*AppConfig, error) {
 	// préservant les valeurs issues du fichier ou de l'env.
 	rv2 := reflect.ValueOf(cfg).Elem()
 	for _, dr := range durRefs {
-		if f := fs.Lookup(dr.flagName); f != nil && f.Changed {
+		if f := flagSet.Lookup(dr.flagName); f != nil && f.Changed {
 			rv2.Field(dr.fieldIdx).SetInt(int64(*dr.intPtr) * int64(time.Second))
 		}
 	}
@@ -254,8 +254,8 @@ func parseFlagsArgs(args []string) (*AppConfig, error) {
 	// Si le flag négatif est fourni, il peut forcer à false.
 	// Règle : le dernier fourni dans args gagne en cas de conflit.
 	for _, nr := range negRefs {
-		posF := fs.Lookup(nr.posName)
-		negF := fs.Lookup(nr.negName)
+		posF := flagSet.Lookup(nr.posName)
+		negF := flagSet.Lookup(nr.negName)
 
 		if negF != nil && negF.Changed {
 			if posF != nil && posF.Changed {
@@ -287,7 +287,7 @@ func parseFlagsArgs(args []string) (*AppConfig, error) {
 		if !ok || !meta.required {
 			continue
 		}
-		f := fs.Lookup(meta.long)
+		f := flagSet.Lookup(meta.long)
 		if f == nil || !f.Changed {
 			missing = append(missing, "--"+meta.long)
 		}

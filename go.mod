@@ -19,18 +19,23 @@ require (
 	github.com/corazawaf/coraza/v3 v3.6.0
 	github.com/dop251/goja v0.0.0-20260311135729-065cd970411c
 	github.com/dop251/goja_nodejs v0.0.0-20260212111938-1f56ff5bcf14
+	github.com/eclipse/paho.mqtt.golang v1.5.1
 	github.com/fasthttp/websocket v1.5.12
 	github.com/fatih/color v1.18.0
 	github.com/fsnotify/fsnotify v1.9.0
+	github.com/go-co-op/gocron/v2 v2.21.0
 	github.com/gofiber/contrib/v3/socketio v1.1.0
 	github.com/gofiber/contrib/v3/websocket v1.1.0
 	github.com/gofiber/fiber/v3 v3.1.0
 	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/google/uuid v1.6.0
+	github.com/gorilla/websocket v1.5.3
 	github.com/joho/godotenv v1.5.1
 	github.com/limba/dtp v0.0.0-00010101000000-000000000000
+	github.com/mochi-mqtt/server/v2 v2.7.9
 	github.com/oschwald/geoip2-golang v1.13.0
-	github.com/pelletier/go-toml/v2 v2.2.4
+	github.com/pelletier/go-toml/v2 v2.3.0
+	github.com/prometheus/client_golang v1.23.2
 	github.com/rs/zerolog v1.34.0
 	github.com/spf13/pflag v1.0.10
 	github.com/valyala/fasthttp v1.69.0
@@ -52,24 +57,22 @@ require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/corazawaf/libinjection-go v0.3.2 // indirect
-	github.com/eclipse/paho.mqtt.golang v1.5.1 // indirect
 	github.com/go-json-experiment/json v0.0.0-20260214004413-d219187c3433 // indirect
 	github.com/goccy/go-yaml v1.19.2 // indirect
 	github.com/gofiber/utils/v2 v2.0.2 // indirect
-	github.com/gorilla/websocket v1.5.3 // indirect
+	github.com/jonboulle/clockwork v0.5.0 // indirect
 	github.com/kaptinlin/go-i18n v0.3.0 // indirect
 	github.com/kaptinlin/jsonpointer v0.4.17 // indirect
 	github.com/kaptinlin/jsonschema v0.7.7 // indirect
 	github.com/kaptinlin/messageformat-go v0.4.19 // indirect
 	github.com/magefile/mage v1.17.1 // indirect
-	github.com/mochi-mqtt/server/v2 v2.7.9 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/oschwald/maxminddb-golang v1.13.0 // indirect
 	github.com/petar-dambovaliev/aho-corasick v0.0.0-20250424160509-463d218d4745 // indirect
-	github.com/prometheus/client_golang v1.23.2 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.66.1 // indirect
 	github.com/prometheus/procfs v0.16.1 // indirect
+	github.com/robfig/cron/v3 v3.0.1 // indirect
 	github.com/rs/xid v1.6.0 // indirect
 	github.com/tidwall/gjson v1.18.0 // indirect
 	github.com/tidwall/match v1.2.0 // indirect

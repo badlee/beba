@@ -8,14 +8,12 @@ import (
 
 func TestFSSyncMethods(t *testing.T) {
 	vm := processor.NewEmpty()
-	vm.AttachGlobals()
-	mod := &Module{}
-	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	tmpDir := t.TempDir()
 	vm.Set("TEST_DIR", filepath.ToSlash(tmpDir))
 
 	script := `
+		const fs =  require('fs')
 		var file = TEST_DIR + "/test.txt";
 		fs.writeFileSync(file, "hello");
 		if (fs.readFileSync(file) !== "hello") throw new Error("Read failed");
@@ -46,17 +44,15 @@ func TestFSSyncMethods(t *testing.T) {
 
 func TestFSAsyncMethods(t *testing.T) {
 	vm := processor.NewEmpty()
-	vm.AttachGlobals()
-	mod := &Module{}
-	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	tmpDir := t.TempDir()
 	vm.Set("TEST_DIR", filepath.ToSlash(tmpDir))
 
 	script := `
+		const fs =  require('fs')
 		var result = null;
 		var file = TEST_DIR + "/async.txt";
-		
+		const fs =  require('fs')
 		fs.writeFile(file, "123")
 			.then(() => fs.readFile(file))
 			.then((data) => {
@@ -83,12 +79,10 @@ func TestFSAsyncMethods(t *testing.T) {
 
 func TestFSReadFileNotFound(t *testing.T) {
 	vm := processor.NewEmpty()
-	vm.AttachGlobals()
-	mod := &Module{}
-	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	// Sync read of non-existent file should panic (caught by JS try/catch)
 	_, err := vm.RunString(`
+		const fs =  require('fs')
 		var caught = false;
 		try {
 			fs.readFileSync("/nonexistent/path/file.txt");
@@ -104,11 +98,9 @@ func TestFSReadFileNotFound(t *testing.T) {
 
 func TestFSWriteFileError(t *testing.T) {
 	vm := processor.NewEmpty()
-	vm.AttachGlobals()
-	mod := &Module{}
-	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	_, err := vm.RunString(`
+		const fs =  require('fs')
 		var caught = false;
 		try {
 			fs.writeFileSync("/nonexistent/dir/file.txt", "data");
@@ -124,14 +116,12 @@ func TestFSWriteFileError(t *testing.T) {
 
 func TestFSAppendFileCreatesNew(t *testing.T) {
 	vm := processor.NewEmpty()
-	vm.AttachGlobals()
-	mod := &Module{}
-	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	tmpDir := t.TempDir()
 	vm.Set("TEST_DIR", filepath.ToSlash(tmpDir))
 
 	_, err := vm.RunString(`
+		const fs =  require('fs')
 		var f = TEST_DIR + "/appended.txt";
 		fs.appendFileSync(f, "first");
 		fs.appendFileSync(f, "second");
@@ -144,11 +134,9 @@ func TestFSAppendFileCreatesNew(t *testing.T) {
 
 func TestFSStatError(t *testing.T) {
 	vm := processor.NewEmpty()
-	vm.AttachGlobals()
-	mod := &Module{}
-	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	_, err := vm.RunString(`
+		const fs =  require('fs')
 		var caught = false;
 		try {
 			fs.statSync("/nonexistent/path");
@@ -164,11 +152,9 @@ func TestFSStatError(t *testing.T) {
 
 func TestFSReaddirError(t *testing.T) {
 	vm := processor.NewEmpty()
-	vm.AttachGlobals()
-	mod := &Module{}
-	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	_, err := vm.RunString(`
+		const fs =  require('fs')
 		var caught = false;
 		try {
 			fs.readdirSync("/nonexistent/dir");
@@ -184,11 +170,9 @@ func TestFSReaddirError(t *testing.T) {
 
 func TestFSMkdirError(t *testing.T) {
 	vm := processor.NewEmpty()
-	vm.AttachGlobals()
-	mod := &Module{}
-	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	_, err := vm.RunString(`
+		const fs =  require('fs')
 		var caught = false;
 		try {
 			fs.mkdirSync("/nonexistent/deep/path");
@@ -204,14 +188,12 @@ func TestFSMkdirError(t *testing.T) {
 
 func TestFSMkdirRecursive(t *testing.T) {
 	vm := processor.NewEmpty()
-	vm.AttachGlobals()
-	mod := &Module{}
-	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	tmpDir := t.TempDir()
 	vm.Set("TEST_DIR", filepath.ToSlash(tmpDir))
 
 	_, err := vm.RunString(`
+		const fs =  require('fs')
 		fs.mkdirSync(TEST_DIR + "/a/b/c", { recursive: true });
 		if (!fs.existsSync(TEST_DIR + "/a/b/c")) throw new Error("Recursive mkdir failed");
 	`)
@@ -222,11 +204,9 @@ func TestFSMkdirRecursive(t *testing.T) {
 
 func TestFSUnlinkError(t *testing.T) {
 	vm := processor.NewEmpty()
-	vm.AttachGlobals()
-	mod := &Module{}
-	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	_, err := vm.RunString(`
+		const fs =  require('fs')
 		var caught = false;
 		try {
 			fs.unlinkSync("/nonexistent/file.txt");
@@ -242,11 +222,9 @@ func TestFSUnlinkError(t *testing.T) {
 
 func TestFSExistsFalse(t *testing.T) {
 	vm := processor.NewEmpty()
-	vm.AttachGlobals()
-	mod := &Module{}
-	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	_, err := vm.RunString(`
+		const fs =  require('fs')
 		if (fs.existsSync("/this/does/not/exist")) throw new Error("Should return false");
 	`)
 	if err != nil {
@@ -256,11 +234,9 @@ func TestFSExistsFalse(t *testing.T) {
 
 func TestFSAsyncReject(t *testing.T) {
 	vm := processor.NewEmpty()
-	vm.AttachGlobals()
-	mod := &Module{}
-	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	_, err := vm.RunString(`
+		const fs =  require('fs')
 		var rejected = false;
 		fs.readFile("/nonexistent/path.txt")
 			.then(() => {})
@@ -277,14 +253,12 @@ func TestFSAsyncReject(t *testing.T) {
 
 func TestFSStatProperties(t *testing.T) {
 	vm := processor.NewEmpty()
-	vm.AttachGlobals()
-	mod := &Module{}
-	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	tmpDir := t.TempDir()
 	vm.Set("TEST_DIR", filepath.ToSlash(tmpDir))
 
 	_, err := vm.RunString(`
+		const fs =  require('fs')
 		var f = TEST_DIR + "/stat-test.txt";
 		fs.writeFileSync(f, "abcde");
 		var st = fs.statSync(f);

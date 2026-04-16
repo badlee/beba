@@ -8,11 +8,9 @@ import (
 
 func TestPathJoin(t *testing.T) {
 	vm := processor.NewEmpty()
-	vm.AttachGlobals()
-	mod := &Module{}
-	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	_, err := vm.RunString(`
+		var path = require('path')
 		var result = path.join("/usr", "local", "bin");
 		if (result !== "/usr/local/bin") throw new Error("join failed: " + result);
 	`)
@@ -23,11 +21,9 @@ func TestPathJoin(t *testing.T) {
 
 func TestPathBasename(t *testing.T) {
 	vm := processor.NewEmpty()
-	vm.AttachGlobals()
-	mod := &Module{}
-	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	_, err := vm.RunString(`
+		var path = require('path')
 		if (path.basename("/foo/bar/baz.html") !== "baz.html") throw new Error("basename failed");
 		if (path.basename("/foo/bar/baz.html", ".html") !== "baz") throw new Error("basename with ext failed");
 		if (path.basename("") !== ".") throw new Error("basename empty failed");
@@ -39,11 +35,9 @@ func TestPathBasename(t *testing.T) {
 
 func TestPathDirname(t *testing.T) {
 	vm := processor.NewEmpty()
-	vm.AttachGlobals()
-	mod := &Module{}
-	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	_, err := vm.RunString(`
+		var path = require('path')
 		if (path.dirname("/foo/bar/baz.html") !== "/foo/bar") throw new Error("dirname failed: " + path.dirname("/foo/bar/baz.html"));
 	`)
 	if err != nil {
@@ -53,11 +47,9 @@ func TestPathDirname(t *testing.T) {
 
 func TestPathExtname(t *testing.T) {
 	vm := processor.NewEmpty()
-	vm.AttachGlobals()
-	mod := &Module{}
-	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	_, err := vm.RunString(`
+		var path = require('path')
 		if (path.extname("index.html") !== ".html") throw new Error("extname failed");
 		if (path.extname("index.") !== ".") throw new Error("extname dot failed");
 		if (path.extname("index") !== "") throw new Error("extname no ext failed");
@@ -70,12 +62,10 @@ func TestPathExtname(t *testing.T) {
 
 func TestPathIsAbsolute(t *testing.T) {
 	vm := processor.NewEmpty()
-	vm.AttachGlobals()
-	mod := &Module{}
-	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	if runtime.GOOS != "windows" {
 		_, err := vm.RunString(`
+			var path = require('path')
 			if (!path.isAbsolute("/foo/bar")) throw new Error("isAbsolute abs failed");
 			if (path.isAbsolute("foo/bar")) throw new Error("isAbsolute rel failed");
 		`)
@@ -87,11 +77,9 @@ func TestPathIsAbsolute(t *testing.T) {
 
 func TestPathNormalize(t *testing.T) {
 	vm := processor.NewEmpty()
-	vm.AttachGlobals()
-	mod := &Module{}
-	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	_, err := vm.RunString(`
+		var path = require('path')
 		var n = path.normalize("/foo/bar//baz/../qux");
 		if (n !== "/foo/bar/qux") throw new Error("normalize failed: " + n);
 	`)
@@ -102,11 +90,9 @@ func TestPathNormalize(t *testing.T) {
 
 func TestPathRelative(t *testing.T) {
 	vm := processor.NewEmpty()
-	vm.AttachGlobals()
-	mod := &Module{}
-	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	_, err := vm.RunString(`
+		var path = require('path')
 		var r = path.relative("/data/orandea/test/aaa", "/data/orandea/impl/bbb");
 		if (r !== "../../impl/bbb") throw new Error("relative failed: " + r);
 	`)
@@ -117,11 +103,9 @@ func TestPathRelative(t *testing.T) {
 
 func TestPathParse(t *testing.T) {
 	vm := processor.NewEmpty()
-	vm.AttachGlobals()
-	mod := &Module{}
-	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	_, err := vm.RunString(`
+		var path = require('path')
 		var p = path.parse("/home/user/dir/file.txt");
 		if (p.base !== "file.txt") throw new Error("parse base: " + p.base);
 		if (p.ext !== ".txt") throw new Error("parse ext: " + p.ext);
@@ -135,11 +119,9 @@ func TestPathParse(t *testing.T) {
 
 func TestPathResolve(t *testing.T) {
 	vm := processor.NewEmpty()
-	vm.AttachGlobals()
-	mod := &Module{}
-	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	_, err := vm.RunString(`
+		var path = require('path')
 		var r = path.resolve("/foo", "bar");
 		if (!path.isAbsolute(r)) throw new Error("resolve should return absolute: " + r);
 	`)
@@ -150,11 +132,9 @@ func TestPathResolve(t *testing.T) {
 
 func TestPathSep(t *testing.T) {
 	vm := processor.NewEmpty()
-	vm.AttachGlobals()
-	mod := &Module{}
-	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	_, err := vm.RunString(`
+		var path = require('path')
 		if (typeof path.sep !== "string" || path.sep.length !== 1) throw new Error("sep invalid: " + path.sep);
 	`)
 	if err != nil {
@@ -174,12 +154,11 @@ func TestModuleNameAndDoc(t *testing.T) {
 
 func TestPathEdgeCases(t *testing.T) {
 	vm := processor.NewEmpty()
-	vm.AttachGlobals()
-	mod := &Module{}
-	mod.Loader(nil, vm.Runtime, vm.NewObject())
 
 	// No-args edge cases
 	_, err := vm.RunString(`
+		var path = require('path')
+
 		if (path.basename() !== "") throw new Error("basename no args");
 		if (path.dirname() !== ".") throw new Error("dirname no args");
 		if (path.extname() !== "") throw new Error("extname no args");

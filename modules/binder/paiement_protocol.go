@@ -174,8 +174,8 @@ import (
 	"strings"
 	"time"
 
-	dbpkg "http-server/modules/db"
 	"http-server/modules"
+	dbpkg "http-server/modules/db"
 	"http-server/plugins/httpserver"
 	"http-server/processor"
 
@@ -367,10 +367,10 @@ type PaymentConnection struct {
 	appConfig interface{} // *config.AppConfig — stored as any to avoid import cycle
 
 	// x402/crypto payment support
-	x402       *x402Config          // non-nil for x402/crypto providers
-	schema     *paymentSchemaLink   // link to a DATABASE table for payment tracking
-	userLookup *paymentUserLookup   // JS code to extract user_id from request
-	ttl        time.Duration        // default TTL for payments (0 = permanent/lifetime)
+	x402       *x402Config        // non-nil for x402/crypto providers
+	schema     *paymentSchemaLink // link to a DATABASE table for payment tracking
+	userLookup *paymentUserLookup // JS code to extract user_id from request
+	ttl        time.Duration      // default TTL for payments (0 = permanent/lifetime)
 }
 
 // defaultRequest merges connection defaults into a PaymentRequest.
@@ -1637,10 +1637,6 @@ func paymentVerifyHMAC(body, sig, secret string) bool {
 
 type PaymentModule struct{}
 
-func init() {
-	modules.RegisterModule(&PaymentModule{})
-}
-
 func (m *PaymentModule) Name() string { return "payment" }
 func (m *PaymentModule) Doc() string {
 	return "Payment module (Stripe, Flutterwave, CinetPay, MTN, Orange, Airtel, x402/crypto, custom)"
@@ -1912,7 +1908,7 @@ func paymentConnProxy(vm *goja.Runtime, conn *PaymentConnection) goja.Value {
 			if offsetVal := opts.Get("offset"); offsetVal != nil && !goja.IsUndefined(offsetVal) {
 				offset = int(offsetVal.ToInteger())
 			}
-			
+
 			parseDate := func(v goja.Value) *time.Time {
 				if v == nil || goja.IsUndefined(v) || goja.IsNull(v) {
 					return nil
@@ -2288,14 +2284,14 @@ func recordPayment(conn *PaymentConnection, userID, ref, product, desc string, a
 
 	row := map[string]interface{}{
 		"id":        refID,
-		s.fields[0]: refID,     // ref
-		s.fields[1]: amount,    // amount
-		s.fields[2]: currency,  // currency
+		s.fields[0]: refID,        // ref
+		s.fields[1]: amount,       // amount
+		s.fields[2]: currency,     // currency
 		s.fields[3]: providerName, // provider
-		s.fields[4]: status,    // status
-		s.fields[5]: product,   // product (the ref from @payment)
-		s.fields[6]: userID,    // user
-		s.fields[7]: expiration, // expiration
+		s.fields[4]: status,       // status
+		s.fields[5]: product,      // product (the ref from @payment)
+		s.fields[6]: userID,       // user
+		s.fields[7]: expiration,   // expiration
 	}
 
 	return db.Table(s.tableName).Create(row).Error
@@ -2309,14 +2305,14 @@ func getPaymentRecords(conn *PaymentConnection, userID, ref string, includeExpir
 	}
 	s := conn.schema
 	var result []map[string]interface{}
-	
+
 	query := db.Table(s.tableName).
 		Where(fmt.Sprintf("%s = ? AND %s = ?", s.fields[6], s.fields[5]), userID, ref)
-		
+
 	if !includeExpired {
 		query = query.Where(fmt.Sprintf("%s > ?", s.fields[7]), time.Now())
 	}
-	
+
 	err := query.Order("created_at DESC").Find(&result).Error
 	if err != nil {
 		return nil, err
@@ -2338,7 +2334,7 @@ func getAmountPayments(conn *PaymentConnection, userID, ref string) float64 {
 			s.fields[4], // status
 			s.fields[7], // expiration
 		), userID, "succeeded", time.Now())
-		
+
 	if ref != "" {
 		query = query.Where(fmt.Sprintf("%s = ?", s.fields[5]), ref)
 	}
@@ -2361,7 +2357,7 @@ func getCountPayments(conn *PaymentConnection, userID, ref string) int64 {
 			s.fields[4], // status
 			s.fields[7], // expiration
 		), userID, "succeeded", time.Now())
-		
+
 	if ref != "" {
 		query = query.Where(fmt.Sprintf("%s = ?", s.fields[5]), ref)
 	}
@@ -2399,7 +2395,7 @@ func getInfoPayments(conn *PaymentConnection, userID, ref string, includeExpired
 
 	var totalCount int64
 	buildQuery().Where(fmt.Sprintf("%s > ?", s.fields[7]), now).Count(&totalCount)
-	
+
 	var totalAmount float64
 	_ = buildQuery().Where(fmt.Sprintf("%s > ?", s.fields[7]), now).
 		Select(fmt.Sprintf("COALESCE(SUM(%s), 0)", s.fields[1])).Row().Scan(&totalAmount)
@@ -2551,21 +2547,21 @@ func x402BuildPaymentRequired(conn *PaymentConnection, price, desc, mimeType, sc
 				continue
 			}
 			accepts = append(accepts, map[string]any{
-				"scheme":    scheme,
+				"scheme":            scheme,
 				"maxAmountRequired": price,
-				"network":   networkID,
-				"payTo":     wallet,
-				"resource":  desc,
+				"network":           networkID,
+				"payTo":             wallet,
+				"resource":          desc,
 			})
 		}
 	}
 
 	return map[string]any{
-		"accepts":     accepts,
-		"description": desc,
-		"mimeType":    mimeType,
+		"accepts":           accepts,
+		"description":       desc,
+		"mimeType":          mimeType,
 		"maxAmountRequired": price,
-		"scheme":      scheme,
+		"scheme":            scheme,
 	}
 }
 
@@ -2646,9 +2642,9 @@ func handleX402Gate(c fiber.Ctx, conn *PaymentConnection, cfg paymentGateConfig,
 
 	// Build payment details
 	details := map[string]any{
-		"description": cfg.Description,
+		"description":       cfg.Description,
 		"maxAmountRequired": cfg.Price,
-		"scheme":      cfg.Scheme,
+		"scheme":            cfg.Scheme,
 	}
 	if cfg.Scheme == "" && conn.x402 != nil {
 		details["scheme"] = conn.x402.scheme
@@ -2905,4 +2901,8 @@ func MountPaymentRoutes(app *httpserver.HTTP, conn *PaymentConnection, prefix st
 	})
 
 	log.Printf("PAYMENT: auto-mounted %q routes on %s", conn.name, prefix)
+}
+
+func init() {
+	modules.RegisterModule(&PaymentModule{})
 }

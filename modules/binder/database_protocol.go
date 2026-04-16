@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 
-	"http-server/modules"
 	"http-server/modules/crud"
 	"http-server/modules/db"
 	"http-server/processor"
@@ -40,10 +39,6 @@ func (p *CrudProtocol) Handle(conn net.Conn) error      { return p.Inner.Handle(
 func (p *CrudProtocol) Close() error                    { return p.Inner.Close() }
 func (p *CrudProtocol) Start() ([]net.Listener, error)  { return p.Inner.Start() }
 
-func init() {
-	modules.RegisterModule(&db.Module{})
-}
-
 func NewDatabaseDirective(c *DirectiveConfig) (Directive, error) {
 	// Check if this is a CRUD-enabled DATABASE by looking for specific keywords
 	isCrud := false
@@ -61,7 +56,7 @@ func NewDatabaseDirective(c *DirectiveConfig) (Directive, error) {
 	}
 
 	// Unified registration for both Classic and CRUD
-	processor.RegisterGlobal("database", &db.Module{}, true)
+	processor.RegisterGlobal("database", db.GetDefaultModule(), true)
 
 	if isCrud {
 		// Initialize as a CRUD protocol but register JS as "database"

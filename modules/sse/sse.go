@@ -4,9 +4,9 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"log"
 	"hash/fnv"
 	"http-server/modules"
+	"log"
 	"reflect"
 	"strings"
 	"sync"
@@ -83,15 +83,16 @@ type Hub struct {
 
 var HubInstance *Hub
 
-// -------------------- INIT --------------------
-func init() {
-	HubInstance = NewHub()
-	modules.RegisterModule(&Module{})
-}
-
 // -------------------- MODULE API --------------------
 func (s *Module) Name() string { return "sse" }
 func (s *Module) Doc() string  { return "Ultra-fast SSE 1M+ connections" }
+
+// ToJSObject exposes the module as a SharedObject (processor.RegisterGlobal).
+func (m *Module) ToJSObject(vm *goja.Runtime) goja.Value {
+	obj := vm.NewObject()
+	m.Loader(nil, vm, obj)
+	return obj
+}
 
 func (s *Module) Loader(c any, vm *goja.Runtime, moduleObject *goja.Object) {
 	// CommonJS support: if exports exists, use it as the target
@@ -453,4 +454,10 @@ func parseChannels(c SSECtx) (string, []string) {
 		}
 	}
 	return sid, unique
+}
+
+// -------------------- INIT --------------------
+func init() {
+	HubInstance = NewHub()
+	modules.RegisterModule(&Module{})
 }

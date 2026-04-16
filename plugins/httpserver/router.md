@@ -113,7 +113,10 @@ pages/
 | `_error.<ext>` | Handler d'erreur générique (fallback pour tout code non couvert) |
 | `(group)/` | Groupe de layout — le nom de répertoire est ignoré dans l'URL |
 | `_layout.<ext>` | Layout (enveloppe commune pour les pages du répertoire) |
-| `*.partial.<ext>` | Fichier partiel (identique à une page mais **ignore les layouts**) |
+| `*.partial.<ext>` | Fichier partiel (ignore les layouts) |
+| `_start.js` | Script d'initialisation (exécuté au démarrage) |
+| `_close.js` | Script de nettoyage (exécuté à la fermeture) |
+| `_*.cron.js` | Tâche planifiée (ex: `_cleanup.cron.js`) |
 
 ---
 

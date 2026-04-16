@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"io/fs"
+	fsIO "io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -145,7 +145,7 @@ func (r *Registry) RegisterNativeModule(name string, loader ModuleLoader) {
 func DefaultSourceLoader(filename string) ([]byte, error) {
 	f, err := os.Open(filename)
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
+		if errors.Is(err, fsIO.ErrNotExist) {
 			err = ModuleFileDoesNotExistError
 		} else if runtime.GOOS == "windows" {
 			if errors.Is(err, syscall.Errno(0x7b)) { // ERROR_INVALID_NAME, The filename, directory name, or volume label syntax is incorrect.

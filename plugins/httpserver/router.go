@@ -80,8 +80,9 @@ package httpserver
 //   }))
 
 import (
+	"bufio"
 	"fmt"
-	"io/fs"
+	fsIO "io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -92,6 +93,7 @@ import (
 	"http-server/processor"
 
 	"github.com/dop251/goja"
+	"github.com/go-co-op/gocron/v2"
 	"github.com/gofiber/fiber/v3"
 )
 
@@ -156,9 +158,14 @@ type RouterConfig struct {
 	// Pour désactiver : RouterConfig{ServeFiles: false, Exclude: []*regexp.Regexp{…}}
 	// (Exclude doit être non-nil pour que ServeFiles=false soit respecté par normalize)
 	ServeFiles bool
+
+	// App est l'instance HTTP parente. Requis pour enregistrer les handlers
+	// de fermeture (_close.js) via app.RegisterOnShutdown.
+	App *HTTP
 }
 
 func (r *RouterConfig) normalize() {
+
 	if r.Root == "" {
 		r.Root = "./pages"
 	}
@@ -260,7 +267,7 @@ var knownHTTPMethods = map[string]bool{
 // Les routes sont enregistrées directement sur l'app Fiber parente via c.App().
 //
 // Note : FsRouter doit être appelé AVANT les autres Use/Get/Post sur l'app.
-func FsRouter(cfgs ...RouterConfig) fiber.Handler {
+func FsRouter(cfgs ...RouterConfig) (fiber.Handler, error) {
 	cfg := RouterConfig{}
 	if len(cfgs) > 0 {
 		cfg = cfgs[0]
@@ -273,12 +280,94 @@ func FsRouter(cfgs ...RouterConfig) fiber.Handler {
 	}
 
 	layoutMap := make(map[string][]string)
-	routes, middlewareMap, notFoundHandlers, errorHandlers := scanDirectory(cfg.Root, cfg.Root, layoutMap, cfg)
-
+	routes, middlewareMap, notFoundHandlers, errorHandlers, startFiles, closeFiles, cronFiles := scanDirectory(cfg.Root, cfg.Root, layoutMap, cfg)
+	cronSched, err := gocron.NewScheduler()
+	if err != nil {
+		return nil, fmt.Errorf("FsRouter: failed to create cron scheduler: %v", err)
+	}
 	// Trier les routes : statiques avant dynamiques, catch-all en dernier
 	sort.SliceStable(routes, func(i, j int) bool {
 		return routePriority(routes[i]) > routePriority(routes[j])
 	})
+
+	// Préparer les fichiers _start.js
+	for _, f := range startFiles {
+		cfg.App.RegisterOnStartup(f, func() error {
+			if !cfg.AppConfig.Silent {
+				fmt.Println("FsRouter: running startup script ", f)
+			}
+			vm := processor.New(filepath.Dir(f), nil, cfg.AppConfig)
+			_, err := vm.ExecuteFile(f)
+			if err != nil && !cfg.AppConfig.Silent {
+				return fmt.Errorf("FsRouter: startup script error (%s): %v\n", f, err)
+			}
+			return nil
+		})
+	}
+
+	// Préparer les fichiers _close.js (shutdown)
+	if cfg.App != nil && len(closeFiles) > 0 {
+		for _, f := range closeFiles {
+			cfg.App.RegisterOnShutdown(f, func() error {
+				if !cfg.AppConfig.Silent {
+					fmt.Println("FsRouter: running shutdown script", f)
+				}
+				baseDir := filepath.Dir(f)
+				_, err := processor.New(baseDir, nil, cfg.AppConfig).ExecuteFile(f)
+				if err != nil && !cfg.AppConfig.Silent {
+					return err
+				}
+				return nil
+			})
+		}
+	}
+
+	// Gérer les tâches cron (_*.cron.js)
+	for _, cronFile := range cronFiles {
+		filePath := cronFile // Capture pour la closure
+		expr := parseCronHeader(filePath)
+		if expr == "" {
+			// Pas de header CRON -> exécuter une fois au démarrage
+			if !cfg.AppConfig.Silent {
+				fmt.Println("FsRouter: running cron script as startup", filePath)
+			}
+			go func(file string) {
+				_, err := processor.New(filepath.Dir(file), nil, cfg.AppConfig).ExecuteFile(file)
+				if err != nil && !cfg.AppConfig.Silent {
+					fmt.Fprintf(os.Stderr, "FsRouter: cron startup error (%s): %v\n", file, err)
+				}
+			}(filePath)
+		} else {
+			// Planifier la tâche cron
+			if !cfg.AppConfig.Silent {
+				fmt.Printf("FsRouter: scheduling cron task %s (%s)\n", filePath, expr)
+			}
+			_, err := cronSched.NewJob(
+				gocron.CronJob(expr, false), // false = format standard 5 champs
+				gocron.NewTask(func(p string) {
+					if !cfg.AppConfig.Silent {
+						fmt.Printf("FsRouter [Cron]: executing %s\n", p)
+					}
+					_, err := processor.New(filepath.Dir(p), nil, cfg.AppConfig).ExecuteFile(p)
+					if err != nil && !cfg.AppConfig.Silent {
+						fmt.Fprintf(os.Stderr, "FsRouter [Cron]: execution error (%s): %v\n", p, err)
+					}
+				}, filePath),
+			)
+			if err != nil {
+				return nil, fmt.Errorf("FsRouter: invalid cron expression in %s: %v", filePath, err)
+			}
+		}
+	}
+	cronSched.Start()
+	if cfg.App != nil {
+		cfg.App.RegisterOnShutdown("gocron", func() error {
+			if !cfg.AppConfig.Silent {
+				fmt.Println("FsRouter: shutting down cron scheduler...")
+			}
+			return cronSched.Shutdown()
+		})
+	}
 
 	// Le handler retourné est un middleware Fiber qui redirige vers les routes scannées.
 	// On l'utilise comme dispatcher — il est enregistré via app.Use() dans main.
@@ -334,7 +423,7 @@ func FsRouter(cfgs ...RouterConfig) fiber.Handler {
 		}
 		// Pas de route trouvée → erreur 404 via le système d'error handlers
 		return handleHTTPError(c, fiber.ErrNotFound, path, errorHandlers, layoutMap, cfg)
-	}
+	}, nil
 }
 
 // ==================== SCAN ====================
@@ -349,12 +438,12 @@ func scanDirectory(
 	baseDir, dir string,
 	layoutMap map[string][]string,
 	cfg RouterConfig,
-) (routes []routeEntry, middlewareMap map[string]string, notFoundHandlers map[string]string, errorHandlers map[string]map[string]string) {
+) (routes []routeEntry, middlewareMap map[string]string, notFoundHandlers map[string]string, errorHandlers map[string]map[string]string, startFiles []string, closeFiles []string, cronFiles []string) {
 	middlewareMap = make(map[string]string)
 	notFoundHandlers = make(map[string]string)
 	errorHandlers = make(map[string]map[string]string)
 
-	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(dir, func(path string, d fsIO.DirEntry, err error) error {
 		if err != nil {
 			return nil // ignorer les erreurs d'accès
 		}
@@ -366,8 +455,22 @@ func scanDirectory(
 		ext := filepath.Ext(name)
 		base := strings.TrimSuffix(name, ext)
 
-		// Ignorer les fichiers cachés
+		// Ignorer les fichiers cachés (commençant par .) sauf pour les fichiers autorisés explicitement
 		if strings.HasPrefix(name, ".") {
+			return nil
+		}
+
+		// Fichiers spéciaux : _start, _close, _*.cron.js
+		if name == "_start.js" {
+			startFiles = append(startFiles, path)
+			return nil
+		}
+		if name == "_close.js" {
+			closeFiles = append(closeFiles, path)
+			return nil
+		}
+		if strings.HasPrefix(name, "_") && strings.HasSuffix(name, ".cron.js") {
+			cronFiles = append(cronFiles, path)
 			return nil
 		}
 
@@ -509,7 +612,7 @@ func scanDirectory(
 		)
 	}
 
-	return routes, middlewareMap, notFoundHandlers, errorHandlers
+	return routes, middlewareMap, notFoundHandlers, errorHandlers, startFiles, closeFiles, cronFiles
 }
 
 // staticFileURL construit l'URL d'un fichier statique en conservant l'extension.
@@ -1501,7 +1604,7 @@ func FsRouterDebug(cfgs ...RouterConfig) string {
 	cfg.normalize()
 
 	layoutMap := make(map[string][]string)
-	routes, middlewareMap, notFoundHandlers, errorHandlers := scanDirectory(cfg.Root, cfg.Root, layoutMap, cfg)
+	routes, middlewareMap, notFoundHandlers, errorHandlers, _, _, _ := scanDirectory(cfg.Root, cfg.Root, layoutMap, cfg)
 
 	sort.SliceStable(routes, func(i, j int) bool {
 		return routePriority(routes[i]) > routePriority(routes[j])
@@ -1666,4 +1769,26 @@ func collectLayouts(baseDir, entryDir string, layoutMap map[string][]string) []s
 		}
 	}
 	return unique
+}
+
+// ==================== CRON SCHEDULER ====================
+
+// parseCronHeader extrait l'expression cron depuis la première ligne du fichier :
+// # CRON * * * * *
+func parseCronHeader(filePath string) string {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	if scanner.Scan() {
+		line := scanner.Text()
+		re := regexp.MustCompile(`(?i)^#\s*CRON\s+(.+)$`)
+		if matches := re.FindStringSubmatch(line); len(matches) > 1 {
+			return strings.TrimSpace(matches[1])
+		}
+	}
+	return ""
 }

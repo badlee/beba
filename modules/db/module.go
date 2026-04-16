@@ -2,6 +2,7 @@ package db
 
 import (
 	"fmt"
+	"http-server/modules"
 	"net/url"
 	"strconv"
 	"strings"
@@ -236,6 +237,12 @@ func mysqlDSNFromURL(u *url.URL) string {
 	)
 }
 
+var defaultModule = &Module{}
+
+func GetDefaultModule() *Module {
+	return defaultModule
+}
+
 type Module struct {
 }
 
@@ -344,4 +351,8 @@ func (s *Module) Loader(_ any, vm *goja.Runtime, moduleObject *goja.Object) {
 		}
 		return conn.ToJSObject(vm)
 	}), goja.Undefined(), goja.FLAG_FALSE, goja.FLAG_TRUE)
+}
+
+func init() {
+	modules.RegisterModule(defaultModule)
 }

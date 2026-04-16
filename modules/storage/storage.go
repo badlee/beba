@@ -50,6 +50,12 @@ func (s *Module) Doc() string {
 	return "Session and Cache module using SurrealDB"
 }
 
+// ToJSObject exposes the module as a SharedObject (processor.RegisterGlobal).
+func (m *Module) ToJSObject(vm *goja.Runtime) goja.Value {
+	obj := vm.NewObject()
+	m.Loader(nil, vm, obj)
+	return obj
+}
 func (s *Module) Loader(c any, vm *goja.Runtime, moduleObject *goja.Object) {
 	// CommonJS support: if exports exists, use it as the target
 	module := moduleObject

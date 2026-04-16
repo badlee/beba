@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"http-server/modules"
-	"http-server/processor"
 
 	"github.com/dop251/goja"
 )
@@ -123,11 +122,10 @@ func (m *Module) ToJSObject(vm *goja.Runtime) goja.Value {
 }
 
 func (m *Module) Loader(_ any, vm *goja.Runtime, moduleObject *goja.Object) {
-	vm.Set("path", m.ToJSObject(vm))
+	moduleObject.Set("exports", m.ToJSObject(vm))
 }
 
 func init() {
 	mod := &Module{}
-	processor.RegisterGlobal("path", mod)
 	modules.RegisterModule(mod)
 }

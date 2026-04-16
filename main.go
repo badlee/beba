@@ -770,6 +770,8 @@ func scanVhosts(vhostDir string, defaultPort int) ([]VhostInfo, error) {
 					switch r.Method {
 					case "DOMAIN":
 						vhostName = r.Path
+					case "ALIAS":
+						aliases = append(aliases, r.Path)
 					case "ALIASES":
 						parts := strings.Split(r.Path, ",")
 						for _, p := range parts {

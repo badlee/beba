@@ -49,6 +49,7 @@ package processor
 
 import (
 	"fmt"
+	"os"
 	"reflect"
 	"strconv"
 	"strings"
@@ -172,9 +173,17 @@ func (vm *Processor) Register(name string, data interface{}) {
 
 // AttachGlobals installe tous les SharedObjects dans la VM goja.
 // À appeler dans processor.New() avant tout RunString.
-func (vm *Processor) AttachGlobals() {
+func (vm *Processor) AttachGlobals(force ...bool) {
+	f := false
+	if len(force) > 0 {
+		f = force[0]
+	}
+	if !f && vm.initialized {
+		return
+	}
 	sharedObjectsMu.RLock()
 	defer sharedObjectsMu.RUnlock()
+	vm.initialized = true
 	for _, so := range sharedObjects {
 		if oi, ok := so.data.(ObjectInitialiser); ok {
 			o := oi.ToJSObject(vm.Runtime)
@@ -183,6 +192,18 @@ func (vm *Processor) AttachGlobals() {
 			_ = so.attach(vm.Runtime)
 		}
 	}
+
+	// Shim process.env
+	process := vm.NewObject()
+	env := vm.NewObject()
+	for _, e := range os.Environ() {
+		pair := strings.SplitN(e, "=", 2)
+		if len(pair) == 2 {
+			env.Set(pair[0], pair[1])
+		}
+	}
+	process.Set("env", env)
+	vm.Set("process", process)
 }
 
 // Subscribe enregistre un listener Go appelé à chaque modification depuis JS.

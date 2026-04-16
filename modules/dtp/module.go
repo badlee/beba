@@ -14,16 +14,19 @@ import (
 
 type Module struct{}
 
-func init() {
-	modules.RegisterModule(&Module{})
-}
-
 func (m *Module) Name() string {
 	return "dtp"
 }
 
 func (m *Module) Doc() string {
 	return "DTP Client module"
+}
+
+// ToJSObject exposes the module as a SharedObject (processor.RegisterGlobal).
+func (m *Module) ToJSObject(vm *goja.Runtime) goja.Value {
+	obj := vm.NewObject()
+	m.Loader(nil, vm, obj)
+	return obj
 }
 
 func (m *Module) Loader(_ any, vm *goja.Runtime, moduleObject *goja.Object) {
@@ -164,4 +167,8 @@ func (m *Module) Loader(_ any, vm *goja.Runtime, moduleObject *goja.Object) {
 			},
 		})
 	})
+}
+
+func init() {
+	modules.RegisterModule(&Module{})
 }
