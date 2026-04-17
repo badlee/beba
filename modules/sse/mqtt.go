@@ -3,6 +3,7 @@ package sse
 // mqtt.go — Broker MQTT 3.1.1/5.0 intégré au Hub SSE, propulsé par mochi-mqtt.
 
 import (
+	"context"
 	"crypto/subtle"
 	"errors"
 	"io"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/gofiber/contrib/v3/websocket"
 	"github.com/gofiber/fiber/v3"
+	"github.com/google/uuid"
 
 	mqtt "github.com/mochi-mqtt/server/v2"
 	"github.com/mochi-mqtt/server/v2/hooks/auth"
@@ -37,6 +39,7 @@ type MQTTConfig struct {
 	OnPublish       func(clientID, topic string, payload []byte, qos byte) bool
 	OnConnect       func(clientID string)
 	OnDisconnect    func(clientID string, cleanDisconnect bool)
+	SharedServer    *MQTTServer // optional shared instance
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -97,13 +100,23 @@ func NewMQTTServer(cfg MQTTConfig, opts *mqtt.Options) (*MQTTServer, error) {
 		return nil, err
 	}
 
-	// ── Ghost Listener ──
-	// Mochi v2 exits Serve() if no network-bound listeners are active.
-	if err := srv.AddListener(listeners.NewTCP(listeners.Config{
-		ID:      "ghost",
-		Address: "127.0.0.1:0",
-	})); err != nil {
-		return nil, err
+	if cfg.ListenerAddress != "" {
+		tcp := listeners.NewTCP(listeners.Config{
+			ID:      "tcp-proxy",
+			Address: cfg.ListenerAddress,
+		})
+		if err := srv.AddListener(tcp); err != nil {
+			return nil, err
+		}
+	} else {
+		// ── Ghost Listener ──
+		// Mochi v2 exits Serve() if no network-bound listeners are active.
+		if err := srv.AddListener(listeners.NewTCP(listeners.Config{
+			ID:      "ghost",
+			Address: "127.0.0.1:0",
+		})); err != nil {
+			return nil, err
+		}
 	}
 
 	if cfg.StorageDB != nil {
@@ -141,17 +154,26 @@ func NewMQTTServer(cfg MQTTConfig, opts *mqtt.Options) (*MQTTServer, error) {
 }
 
 func (ms *MQTTServer) ServeConn(conn net.Conn) {
-	log.Printf("mqtt: injecting connection from %s via EstablishConnection", conn.RemoteAddr())
+	// Don't inject if the bridge is closing
+	select {
+	case <-ms.bridge.done:
+		conn.Close()
+		return
+	default:
+	}
+	
 	go func() {
+		// Use a local ID or the remote address for logging
 		err := ms.server.EstablishConnection("tcp-proxy", conn)
 		if err != nil {
-			log.Printf("mqtt: EstablishConnection error for %s: %v", conn.RemoteAddr(), err)
+			// Expected if server is closing
 			conn.Close()
 		}
 	}()
 }
 
 func (ms *MQTTServer) Close() error {
+	ms.bridge.Close(nil) // First stop accepting new bridge connections
 	if ms.hookFn != nil {
 		HubInstance.RemovePublishHook(ms.hookFn)
 		ms.hookFn = nil
@@ -170,21 +192,104 @@ func MQTTUpgradeMiddleware(c fiber.Ctx) error {
 	return fiber.ErrUpgradeRequired
 }
 
-func MQTTHandler(cfg MQTTConfig) func(*websocket.Conn) {
-	var (
-		ms   *MQTTServer
-		once sync.Once
-	)
-
+func MQTTHandler(cfg MQTTConfig, runner ...*ScriptedRunner) func(*websocket.Conn) {
 	return func(ws *websocket.Conn) {
-		once.Do(func() {
-			ms, _ = NewMQTTServer(cfg, nil)
-		})
+		// Unified bridge for Fiber WebSocket/MQTT
+		sid := ws.Params("id", ws.Query("id", "mqtt-client"))
+		hubCtx, hubCancel := context.WithCancel(context.Background())
+		defer hubCancel()
 
-		if ms == nil || ms.bridge == nil {
-			ws.Close()
-			return
+		hubClient := &Client{
+			sid:     sid,
+			ConnID:  sid + "_" + uuid.New().String(), // Unique for MQTT
+			message: make(chan *Message, clientBuf),
+			ctx:     hubCtx,
+			cancel:  hubCancel,
 		}
+
+		var scripted *Runtime
+		
+		// Unified Cleanup
+		defer func() {
+			if scripted != nil {
+				scripted.Shutdown()
+			}
+			hubCancel()
+			hubClient.closed.Store(true)
+			// Cleanup all channels from Hub
+			hubClient.chMu.Lock()
+			channels := append([]string{}, hubClient.channels...)
+			hubClient.chMu.Unlock()
+			for _, ch := range channels {
+				HubInstance.Unsubscribe(hubClient, ch)
+			}
+			log.Printf("mqtt: client %s disconnected", sid)
+		}()
+
+		if len(runner) > 0 && runner[0] != nil {
+			r := runner[0]
+			scripted = NewRuntime(hubClient, func(topic, data string) error {
+				HubInstance.Publish(&Message{
+					Channel:   topic,
+					Data:      data,
+					Source:    "js",
+					SenderSID: hubClient.ConnID,
+				})
+				return nil
+			}, func() {
+				ws.Close()
+			}, ws)
+
+			if err := scripted.Run(r.Code, ".", r.Config); err != nil {
+				log.Printf("MQTT JS runtime error: %v", err)
+			}
+
+			mqttHook := func(msg *Message) {
+				if msg.Source == "mqtt" {
+					scripted.Emit("message", map[string]string{
+						"topic":   msg.Channel,
+						"payload": msg.Data,
+					})
+				}
+			}
+			HubInstance.AddPublishHook(mqttHook)
+			defer HubInstance.RemovePublishHook(mqttHook)
+
+			// Background loop: Hub -> JS (hub_message)
+			go func() {
+				for {
+					select {
+					case <-hubClient.ctx.Done():
+						return
+					case msg, ok := <-hubClient.message:
+						if !ok {
+							return
+						}
+						scripted.Emit("hub_message", msg)
+					}
+				}
+			}()
+		}
+
+		ms := cfg.SharedServer
+		var localServer bool
+		if ms == nil {
+			localServer = true
+			var err error
+			ms, err = NewMQTTServer(cfg, nil)
+			if err != nil {
+				log.Printf("MQTTHandler: failed to start local bridge server: %v", err)
+				ws.Close()
+				return
+			}
+		} else {
+			// give the shared server a moment to be truly ready
+		}
+		
+		if localServer {
+			defer ms.Close()
+		}
+
 		ms.bridge.serve(ws)
 	}
 }
@@ -239,7 +344,8 @@ func (l *mqttWSListener) Serve(establishFn listeners.EstablishFn) {
 		case nc := <-l.connCh:
 			go func(c *wsNetConn) {
 				defer close(c.done)
-				establishFn(l.id, c)
+				// establishFn blocks until client disconnects or server closes
+				_ = establishFn(l.id, c)
 			}(nc)
 		case <-l.done:
 			return
@@ -248,7 +354,12 @@ func (l *mqttWSListener) Serve(establishFn listeners.EstablishFn) {
 }
 
 func (l *mqttWSListener) Close(closeClients listeners.CloseFn) {
-	close(l.done)
+	select {
+	case <-l.done:
+		return
+	default:
+		close(l.done)
+	}
 	l.closeWG.Wait()
 }
 

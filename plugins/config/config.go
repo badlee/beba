@@ -37,8 +37,8 @@ type AppConfig struct {
 	HotReload   bool     `json:"hot_reload"  yaml:"hot_reload"  toml:"hot_reload"  mapstructure:"hot_reload"  env:"HOT_RELOAD"  flag:"hot-reload|H"  default:"true"       desc:"Enable hot-reload"`
 
 	// ---- bind ----------------------------------------------------------
-	Port    int    `json:"port"             yaml:"port"             toml:"port"             mapstructure:"port"    env:"PORT"    validate:"min=1,max=65535" flag:"#port|p"    default:"8080"    desc:"Port to listen on"`
-	Address string `json:"address"          yaml:"address"          toml:"address"          mapstructure:"address" env:"ADDRESS" validate:"ip_or_hostname"  flag:"#address|a" default:"0.0.0.0" desc:"Bind address"`
+	Port          int    `json:"port"             yaml:"port"             toml:"port"             mapstructure:"port"    env:"PORT"    validate:"min=1,max=65535" flag:"#port|p"    default:"8080"    desc:"Port to listen on"`
+	Address       string `json:"address"          yaml:"address"          toml:"address"          mapstructure:"address" env:"ADDRESS" validate:"ip_or_hostname"  flag:"#address|a" default:"0.0.0.0" desc:"Bind address"`
 	Socket        string `json:"socket,omitempty" yaml:"socket,omitempty" toml:"socket,omitempty" mapstructure:"socket"  env:"SOCKET"                            flag:"#socket|s"                    desc:"Unix domain socket path"`
 	ControlSocket string `json:"control_socket,omitempty" yaml:"control_socket,omitempty" toml:"control_socket,omitempty" mapstructure:"control_socket" env:"CONTROL_SOCKET" flag:"#control-socket"           desc:"Control Unix domain socket path for IPC"`
 
@@ -92,8 +92,11 @@ type AppConfig struct {
 	Match string `json:"match,omitempty" yaml:"match,omitempty" toml:"match,omitempty" mapstructure:"match" env:"MATCH" flag:"match" desc:"Validation expression for test mode"`
 
 	// ---- vhost ---------------------------------------------------------
-	VHosts   bool     `json:"vhosts"              yaml:"vhosts"              toml:"vhosts"              mapstructure:"vhosts"    env:"VHOSTS"    flag:"#vhosts|V"  desc:"Enable virtual host mode"`
+	VHosts    bool     `json:"vhosts"              yaml:"vhosts"              toml:"vhosts"              mapstructure:"vhosts"    env:"VHOSTS"    flag:"#vhosts|V"  desc:"Enable virtual host mode"`
 	BindFiles []string `json:"bind_files,omitempty" yaml:"bind_files,omitempty" toml:"bind_files,omitempty" mapstructure:"bind_files" env:"BIND_FILES" flag:"#bind|b"       desc:"Paths to .bind protocol configs"`
+
+	// ---- cron ----------------------------------------------------------
+	HasSchedule bool `json:"schedule" yaml:"schedule" toml:"schedule" mapstructure:"schedule" env:"SCHEDULE" flag:"schedule" default:"true" desc:"Enable background cron tasks"`
 }
 
 // DefaultConfig retourne la configuration par défaut.
@@ -127,5 +130,7 @@ func DefaultConfig() *AppConfig {
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 0,
 		IdleTimeout:  120 * time.Second,
+
+		HasSchedule: true,
 	}
 }

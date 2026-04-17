@@ -72,12 +72,16 @@ package httpserver
 // # Usage
 //
 //   app := httpserver.New(httpserver.Config{...})
-//   app.Use(httpserver.FsRouter(httpserver.RouterConfig{
+//   h, err := httpserver.FsRouter(httpserver.RouterConfig{
 //       Root:        "./pages",
 //       TemplateExt: ".html",
 //       IndexFile:   "index",
 //       AppConfig:   &myAppConfig,
-//   }))
+//   })
+//	 if err != nil {
+//	 	 panic(err)
+//	 }
+//	 app.Use(h)
 
 import (
 	"bufio"
@@ -323,31 +327,33 @@ func FsRouter(cfgs ...RouterConfig) (fiber.Handler, error) {
 	}
 
 	// Gérer les tâches cron (_*.cron.js)
-	for _, cronFile := range cronFiles {
-		filePath := cronFile // Capture pour la closure
-		expr := parseCronHeader(filePath)
-		if expr == "" {
-			// Pas de header CRON -> émettre un message d'erreur au démarrage
-			return nil, fmt.Errorf("FsRouter: cron script %s has no CRON header", filePath)
-		} else {
-			// Planifier la tâche cron
-			if !cfg.AppConfig.Silent {
-				fmt.Printf("FsRouter: scheduling cron task %s (%s)\n", filePath, expr)
-			}
-			_, err := cronSched.NewJob(
-				gocron.CronJob(expr, false), // false = format standard 5 champs
-				gocron.NewTask(func(p string) {
-					if !cfg.AppConfig.Silent {
-						fmt.Printf("FsRouter [Cron]: executing %s\n", p)
-					}
-					_, err := processor.New(filepath.Dir(p), nil, cfg.AppConfig).ExecuteFile(p)
-					if err != nil && !cfg.AppConfig.Silent {
-						fmt.Fprintf(os.Stderr, "FsRouter [Cron]: execution error (%s): %v\n", p, err)
-					}
-				}, filePath),
-			)
-			if err != nil {
-				return nil, fmt.Errorf("FsRouter: invalid cron expression in %s: %v", filePath, err)
+	if cfg.AppConfig.HasSchedule {
+		for _, cronFile := range cronFiles {
+			filePath := cronFile // Capture pour la closure
+			expr := parseCronHeader(filePath)
+			if expr == "" {
+				// Pas de header CRON -> émettre un message d'erreur au démarrage
+				return nil, fmt.Errorf("FsRouter: cron script %s has no CRON header", filePath)
+			} else {
+				// Planifier la tâche cron
+				if !cfg.AppConfig.Silent {
+					fmt.Printf("FsRouter: scheduling cron task %s (%s)\n", filePath, expr)
+				}
+				_, err := cronSched.NewJob(
+					gocron.CronJob(expr, false), // false = format standard 5 champs
+					gocron.NewTask(func(p string) {
+						if !cfg.AppConfig.Silent {
+							fmt.Printf("FsRouter [Cron]: executing %s\n", p)
+						}
+						_, err := processor.New(filepath.Dir(p), nil, cfg.AppConfig).ExecuteFile(p)
+						if err != nil && !cfg.AppConfig.Silent {
+							fmt.Fprintf(os.Stderr, "FsRouter [Cron]: execution error (%s): %v\n", p, err)
+						}
+					}, filePath),
+				)
+				if err != nil {
+					return nil, fmt.Errorf("FsRouter: invalid cron expression in %s: %v", filePath, err)
+				}
 			}
 		}
 	}

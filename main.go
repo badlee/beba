@@ -455,28 +455,28 @@ func main() {
 		Secret:       cfg.SecretKey,
 	})
 
-	// SSE + WebSocket
-	app.Get("/events", sse.Handler)
-	app.Get("/event/:id", sse.Handler)
-	app.Get("/event/:id/:channel", sse.Handler)
-	app.Get("/sse", sse.Handler)
-	realtime := app.Group("/_")
-	realtime.Get("/sse", sse.Handler)
-	realtime.Get("/sse/:id", sse.Handler)
-	realtime.Get("/sse/:id/:channel", sse.Handler)
+	// realtime SSE + WebSocket + Socket.IO + MQTT
+	realtime := app.Group("/api/realtime")
+	// sse handler
+	realtime.Get("/sse", func(c fiber.Ctx) error { return sse.Handler(c) })
+	realtime.Get("/sse/:id", func(c fiber.Ctx) error { return sse.Handler(c) })
+	realtime.Get("/sse/:id/:channel", func(c fiber.Ctx) error { return sse.Handler(c) })
+	// websocket handler
 	realtime.Use("/ws", sse.WSUpgradeMiddleware)
-	realtime.Get("/ws", websocket.New(sse.WSHandler))
-	realtime.Get("/ws/:id", websocket.New(sse.WSHandler))
-	realtime.Get("/ws/:id/:channel", websocket.New(sse.WSHandler))
-	realtime.Use("/sio", func(c fiber.Ctx) error {
+	realtime.Get("/ws", websocket.New(func(conn *websocket.Conn) { sse.WSHandler(conn) }))
+	realtime.Get("/ws/:id", websocket.New(func(conn *websocket.Conn) { sse.WSHandler(conn) }))
+	realtime.Get("/ws/:id/:channel", websocket.New(func(conn *websocket.Conn) { sse.WSHandler(conn) }))
+	// socket.io handler
+	realtime.Use("/io", func(c fiber.Ctx) error {
 		if websocket.IsWebSocketUpgrade(c) {
 			c.Locals("sid", c.Cookies("sid")) // optionnel
 			return c.Next()
 		}
 		return fiber.ErrUpgradeRequired
 	})
-	realtime.Get("/sio", sse.SIOHandler())
-	realtime.Get("/sio/:id", sse.SIOHandler())
+	realtime.Get("/io", sse.SIOHandler())
+	realtime.Get("/io/:id", sse.SIOHandler())
+	// mqtt handler
 	mqttCfg := sse.MQTTConfig{
 		Auth: sse.MQTTAllowAllAuth(),
 		OnPublish: func(id, topic string, payload []byte, qos byte) bool {
@@ -491,17 +491,7 @@ func main() {
 
 	// Logger d'accès
 	if !cfg.Silent {
-		if err := os.MkdirAll(".logs", 0755); err != nil {
-			log.Printf("Failed to create .logs directory: %v", err)
-		}
-		logFile, err := os.OpenFile(filepath.Join(".logs", "access.log"), os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
-		if err != nil {
-			log.Printf("error opening log file: %v", err)
-			app.Use(logger.New())
-		} else {
-			app.Use(logger.New(logger.Config{Stream: logFile}))
-			logFiles = append(logFiles, logFile)
-		}
+		app.Use(logger.New(logger.Config{Stream: globalStdout}))
 	}
 
 	// CORS
@@ -516,9 +506,7 @@ func main() {
 			Next: func(c fiber.Ctx) bool {
 				// SSE et WS ne doivent pas être compressés
 				p := c.Path()
-				if strings.HasPrefix(p, "/events") ||
-					strings.HasPrefix(p, "/event/") ||
-					strings.HasPrefix(p, "/ws") {
+				if strings.HasPrefix(p, "/api/realtime/") {
 					return true
 				}
 				enc := c.Get("Accept-Encoding")
@@ -563,7 +551,11 @@ func main() {
 		if !cfg.Silent {
 			fmt.Print(httpserver.FsRouterDebug(routerCfg))
 		}
-		app.Use(httpserver.FsRouter(routerCfg))
+		h, err := httpserver.FsRouter(routerCfg)
+		if err != nil {
+			exit(fmt.Errorf("FsRouter initialization failed: %v", err))
+		}
+		app.Use(h)
 	} else {
 		// Fallback : serveur de fichiers statiques basique (sans FsRouter)
 		staticConfig := static.Config{

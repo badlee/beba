@@ -30,16 +30,13 @@ func (m *Module) Doc() string {
 
 // ToJSObject exposes the module as a SharedObject (processor.RegisterGlobal).
 func (m *Module) ToJSObject(vm *goja.Runtime) goja.Value {
-	obj := vm.NewObject()
-	m.Loader(nil, vm, obj)
-	return obj.Get("exports")
+	return vm.ToValue(m.fetchFn(vm))
 }
 
 func (m *Module) Loader(_ any, vm *goja.Runtime, moduleObject *goja.Object) {
 	if m.client == nil {
 		m.client = &http.Client{Timeout: 30 * time.Second}
 	}
-	// Also explicitly set fetch into the VM in case loader logic targets exports instead
 	moduleObject.Set("exports", m.ToJSObject(vm))
 }
 

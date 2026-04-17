@@ -14,6 +14,7 @@ PAYMENT [provider_url]                 // Connexion Paiement (Stripe, MoMo, X402
 SECURITY [name]                        // Profil de sécurité réutilisable
 
 [PROTOCOL] [address]                   // Groupe d'écoute (TCP, UDP, HTTP, HTTPS, MQTT, MAIL...)
+    // Si imbriqué dans TCP, [address] est optionnel (hérité du parent)
 
     // -- Configuration & Environnement --
     ENV PREFIX [prefix]                // Préfixe pour les vars d'env (défaut: APP_)
@@ -156,16 +157,27 @@ SECURITY [name]                        // Profil de sécurité réutilisable
     END [METHOD]
     
 
-    // -- Autres Handlers Spécifiques --
-    SSE [path]                         // Server-Sent Events inline
+    // -- Handlers Spécifiques au runtime --
+    SSE [path]                          // Server-Sent Events passif (recois les events, uniquement des channels enregistre (?channel=... ou ?channels=...))
+    SSE [path] HANDLER [filepath]       // Server-Sent Events fichier
+    SSE [path] BEGIN                    // Server-Sent Events inline
         /* JS Code */
     END SSE
-    SSE [path] HANDLER [filepath]      // Server-Sent Events fichier
-    WS [path]                          // WebSocket inline
+    WS [path]                          // WebSocket passif (recois les events, uniquement, et ne publie que sur les channels enregistre (?channel=... ou ?channels=...) ou si rien n'est enregistre alors publie sur global), la structure d'un message est : {id: string, channel: string, data: any /* any serialized json data */}
+    WS [path] HANDLER [filepath]        // WebSocket fichier
+    WS [path] BEGIN                     // WebSocket inline
         /* JS Code */
     END WS
-    IO [path]                          // Socket.IO handler
-
+    IO [path]                          // Socket.IO passif (recois les events, uniquement, et ne publie que sur les channels enregistre (?channel=... ou ?channels=...))
+    IO [path]  HANDLER [filepath]       // Socket.IO ficher
+    IO [path] BEGIN                     // inline handler
+        /* JS Code */
+    END IO
+    MQTT [path]                          // MQTT Over Websocket passif (recois les events, uniquement, et ne publie que sur les channels enregistre (?channel=... ou ?channels=...))
+    MQTT [path]  HANDLER [filepath]     // MQTT Over Websocket ficher
+    MQTT [path] BEGIN                   // inline handler
+        /* JS Code */
+    END MQTT
 END [PROTOCOL]
 ```
 
@@ -385,8 +397,8 @@ SSL key.pem cert.pem
 Délègue les requêtes entrantes à un serveur distant.
 
 ```hcl
-PROXY /api http://backend:8080         // Proxy Intelligent (Gère HTTP et WebSocket dynamiquement)
-PROXY WS /ws ws://socket-server:9000   // Proxy strictement WebSocket
+PROXY /api/realtime http://backend:8080         // Proxy Intelligent (Gère HTTP et WebSocket dynamiquement)
+PROXY WS /api/realtime/ws ws://socket-server:9000   // Proxy strictement WebSocket
 PROXY HTTP /rpc http://rpc-service:7070// Proxy strictement HTTP
 ```
 

@@ -59,6 +59,7 @@ Serving virtual hosts from a directory:
 | `--match` | | | Validation expression (regex or JS) in test mode |
 | `--vhosts` | `-V` | `false` | Enable virtual hosts (root becomes vhost directory) |
 | `--bind` | `-b` | | Paths to `.bind` configuration files (multiple allowed) |
+| `--schedule` | | `true` | Enable background cron tasks (`_*.cron.js`) |
 | `--help` | `-?` | `false` | Print help and exit |
 
 > [!NOTE]
@@ -106,23 +107,19 @@ This ensures that:
 - Child processes are automatically terminated when the master process stops.
 
 ### .vhost Configuration
-You can place a `.vhost` file inside a vhost subfolder to override defaults using **HCL syntax**:
+You can place a `.vhost` or `.vhost.bind` file inside a vhost subfolder to override defaults using **Binder syntax**:
 
-```hcl
-domain  = "my-explicit-domain.com"
-aliases = ["alias1.com", "alias2.com"]
+```bind
+HTTP ":80"
+  DOMAIN "my-explicit-domain.com"
+  ALIASES "alias1.com, alias2.com"
+END HTTP
 
-email = "admin@my-explicit-domain.com"
-cert  = "/path/to/cert.pem"
-key   = "/path/to/key.pem"
-
-http {
-  port = 80
-}
-
-https {
-  port = 443
-}
+HTTPS ":443"
+  DOMAIN "my-explicit-domain.com"
+  EMAIL  "admin@my-explicit-domain.com"
+  # SSL "/path/to/cert.pem" "/path/to/key.pem"
+END HTTPS
 ```
 
 > For the complete Virtual Hosts reference (architecture, autocert, sockets, flags propagation, examples), see **[doc/VHOST.md](VHOST.md)**.

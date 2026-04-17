@@ -15,16 +15,14 @@ Thanks to **non-destructive protocol sniffing** (`bufio.Peek`), the server can d
 ### WebSocket Support
 MQTT is accessible via:
 - **Native TCP**: Default (usually port 1883).
-- **WebSockets (WSS)**: Automatically enabled when the `MQTT` directive is placed inside an `HTTPS` block or when using the `@mqtt` middleware on a specific route.
+- **WebSockets (WSS)**: Automatically enabled when the `MQTT` directive is placed inside an `HTTP`/`HTTPS` block. The standard path is **`/api/realtime/mqtt`**.
 
 ---
 
-
 ## 🏗️ Security Interoperability
-Because `http-server` uses a defense-in-depth model, the **MQTT Broker** is protected by the **Sentinel Layer (L1-L4)** even before the first MQTT packet is parsed.
-- **Connection Denial**: Blocked IPs or Geo-restricted countries are rejected at the `net.Accept` stage.
-- **DDoS Mitigation**: The `CONNECTION RATE` directive prevents the broker from being overwhelmed by rapid `CONNECT` attempts.
-- **Sniffing Security**: Using `bufio.Peek`, the security engine inspects the headers of a connection without consuming it, allowing the MQTT broker to receive the full handshake if allowed.
+Parce que `http-server` utilise un modèle de défense en profondeur, le **Broker MQTT** est protégé par la **couche Sentinel (L1-L4)** avant même que le premier paquet MQTT ne soit parsé.
+- **Déni de Connexion** : Les IPs bloquées ou les pays restreints par GeoIP sont rejetés dès l'étape `net.Accept`.
+- **Mitigation DDoS** : La directive `CONNECTION RATE` empêche le broker d'être submergé par des tentatives de `CONNECT` rapides.
 
 ## 🚀 Configuration
 
@@ -40,30 +38,31 @@ END SECURITY
 
 MQTT :1883
     # L1: Socket Security
-    SECURITY iot_shield
+        SECURITY iot_shield
 
-    # L5: Persistence (QoS 1 & 2)
-    STORAGE default
-    
-    # Auth & ACLs
-    AUTH "admin" "secret_pass"
-    ACL DEFINE
-        ALLOW ALL READ "public/#"
-        ALLOW USER "admin" WRITE "#"
-    END ACL
+        # L5: Persistance (QoS 1 & 2)
+        STORAGE mqtt_db
+        
+        # Auth & ACLs
+        AUTH "admin" "secret_pass"
+        ACL DEFINE
+            ALLOW ALL READ "public/#"
+            ALLOW USER "admin" WRITE "#"
+        END ACL
 
     # Advanced MQTT v5 Capabilities
-    OPTIONS DEFINE
-        MAX_CLIENTS 5000
-        MESSAGE_EXPIRY 24h
+        OPTIONS DEFINE
+            MAX_CLIENTS 5000
+            MESSAGE_EXPIRY 24h
         SESSION_EXPIRY 7d
         MAX_PACKET_SIZE 65535
-        RETAIN ON
-    END OPTIONS
+            RETAIN ON
+        END OPTIONS
 
     # JS Logic
     ON PUBLISH @processor "logic.js"
-END MQTT
+    END MQTT
+END TCP
 ```
 
 ---
@@ -71,19 +70,10 @@ END MQTT
 ## 🛠️ Directives
 
 ### 1. `STORAGE [DBName]`
-Enables atomicity and persistence for **QoS 1 & 2** messages, retained messages, and persistent sessions.
-- Requires a defined `DATABASE`.
-- Automatically migrates tables: `mqtt_clients`, `mqtt_subscriptions`, `mqtt_retained`, `mqtt_inflight`.
+Active l'atomicité et la persistance pour les messages **QoS 1 & 2**, les messages retenus et les sessions persistantes.
 
 ### 2. `ACL DEFINE`
-Granular access control for topics.
-```hcl
-ACL DEFINE
-    ALLOW ALL READ "sensors/+"
-    DENY  USER "guest" WRITE "sensors/#"
-    ALLOW IP "10.0.0.1" ALL "#"
-END ACL
-```
+Contrôle d'accès granulaire aux topics.
 
 ### 3. `OPTIONS DEFINE`
 Fine-tune the broker's behavior and MQTT v5 capabilities:
@@ -97,16 +87,59 @@ Fine-tune the broker's behavior and MQTT v5 capabilities:
 
 ---
 
-## 🔗 The SSE/MQTT Bridge
+## 🔗 Le Pont SSE/MQTT (Unified Hub)
 
-The hub provides a native bridge between browser-based SSE and industrial MQTT:
-- **Broadcasting**: Any message published to an MQTT topic is automatically emitted as an SSE event to clients subscribed to the same channel name.
-- **Injection**: Using `require('sse').publish(topic, payload)`, you can inject data into the MQTT broker directly from a JS handler.
+Le hub fournit un pont natif entre le SSE (navigateur) et le MQTT (industriel) :
+- **Broadcasting** : Tout message publié sur un topic MQTT est automatiquement émis sous forme d'événement SSE vers les clients abonnés au même canal.
+- **Path Web-Standard** : Le broker est accessible via WebSocket sur **`/api/realtime/mqtt`**.
 
 ---
 
-## 🧪 Validation
-The MQTT module is verified against:
-- **Persistence Leak-testing**: Ensuring DB size remains stable under high volume.
-- **Security Interception**: Validating that blocked IPs never trigger a `CONNECT` response.
-- **Protocol Switching**: Testing seamless transitions between TCP and WebSocket clients.
+## 🧪 DSL Complet
+
+```hcl
+MQTT [address]?
+    // Configuration du moteur (mochi-mqtt)
+    OPTIONS DEFINE
+        MAX_CLIENTS [int]
+        MESSAGE_EXPIRY [duration] // 1m, 3h, 2j...
+        WRITES_PENDING [int]
+        SESSION_EXPIRY [duration]
+        MAX_PACKET_SIZE [int]
+        MAX_PACKETS [int]
+        MAX_RECEIVE [int]
+        MAX_INFLIGHT [int]
+        MAX_ALIAS [int]
+        AVAILABLE_SHARED_SUB [ON|OFF]
+        MIN_PROTOCOL [3|5]
+        RETAIN [ON|OFF]
+        HAS_WILDCARD_SUB [ON|OFF]
+    END OPTIONS
+
+    // Persistance (Sessions, Retains)
+    STORAGE [db_name]
+
+    // Sécurité L4 réutilisant un bloc SECURITY
+    SECURITY [security_name]
+
+    // Authentification
+    AUTH USER [USER_NAME] [PWD] 
+    AUTH HANDLER [filepath]
+    AUTH BEGIN 
+        /* code JS : allow(), reject(msg) */
+    END AUTH
+    
+    // Contrôle d'accès (ACL)
+    ACL ALLOW ANY READ "public/#"
+    ACL DENY ANY WRITE "firmware/updates/+"
+    ACL BEGIN 
+        /* code JS : allow(), reject(msg) */
+    END ACL
+
+    // Les HOOKS (Événements)
+    ON [EVENT_TYPE] [event_name] HANDLER [js_filepath]
+    ON [EVENT_TYPE] [event_name] BEGIN 
+        /* code JS */
+    END ON
+END MQTT
+```

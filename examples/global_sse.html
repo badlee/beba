@@ -27,7 +27,7 @@
     <p>Total page visits: <span visits>{{totalVisits}}</span></p>
 
     <script>
-        const evtSource = new EventSource("/events");
+        const evtSource = new EventSource("/api/realtime/sse");
         evtSource.addEventListener("notification", (event) => {
             const newElement = document.createElement("li");
             newElement.textContent = "Global: " + event.data;

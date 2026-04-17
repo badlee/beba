@@ -1,0 +1,23 @@
+
+HTTP 0.0.0.0:9999
+    WS /scripted BEGIN
+        subscribe("chat", (msg) => {
+            console.log("JS Received Hub Message:", msg.data);
+            send("ECHO: " + msg.data);
+        });
+        
+        publish("chat", "Hello from JS Init!");
+        
+        // Simple interval test
+        var count = 0;
+        var timer = setInterval(() => {
+            count++;
+            send("TICK: " + count);
+            if (count >= 5) {
+                clearInterval(timer);
+                send("DONE");
+                // close(); // Optional: close connection
+            }
+        }, 1000);
+    END WS
+END HTTP

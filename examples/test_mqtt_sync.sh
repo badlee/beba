@@ -7,8 +7,8 @@
 # This script validates bidirectional synchronization between SSE and MQTT.
 
 PORT=9400
-MQTT_URL="ws://127.0.0.1:$PORT/mqtt"
-SSE_URL="http://127.0.0.1:$PORT/sse"
+MQTT_URL="ws://127.0.0.1:$PORT/api/realtime/mqtt"
+SSE_URL="http://127.0.0.1:$PORT/api/realtime/sse"
 PUB_URL="http://127.0.0.1:$PORT/api/publish"
 
 echo "--- MQTT-Hub Synchronization Test ---"

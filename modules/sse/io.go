@@ -48,6 +48,7 @@ import (
 	"github.com/gofiber/contrib/v3/socketio"
 	"github.com/gofiber/contrib/v3/websocket"
 	"github.com/gofiber/fiber/v3"
+	guuid "github.com/google/uuid"
 )
 
 // ==================== REGISTRY Socket.IO ====================
@@ -63,6 +64,8 @@ type sioEntry struct {
 	hubClient *Client
 	cancel    context.CancelFunc
 	channels  []string // canaux Hub auxquels ce client est abonné
+	scripted  bool     // mode scripté vs passif
+	runtime   *Runtime // JS runtime (nil si pas de script)
 }
 
 var sioReg = &sioRegistry{clients: make(map[string]*sioEntry)}
@@ -131,25 +134,25 @@ type sioMessage struct {
 
 // SIOHandler retourne un handler Fiber enregistrant les événements Socket.IO
 // et connectant chaque socket au Hub SSE.
-//
-// Utilisation dans main.go :
-//
-//	app.Use("/sio", func(c fiber.Ctx) error {
-//	    if websocket.IsWebSocketUpgrade(c) {
-//	        c.Locals("sid", c.Cookies("sid")) // optionnel
-//	        return c.Next()
-//	    }
-//	    return fiber.ErrUpgradeRequired
-//	})
-//	app.Get("/sio",     sse.SIOHandler())
-//	app.Get("/sio/:id", sse.SIOHandler())
-func SIOHandler(cfg ...websocket.Config) func(fiber.Ctx) error {
+func SIOHandler(cfg ...any) func(fiber.Ctx) error {
+	// We use any for cfg to avoid confusion with websocket.Config if we want to pass ScriptedRunner
+	var runner *ScriptedRunner
+	var wsCfg websocket.Config
+
+	for _, c := range cfg {
+		if r, ok := c.(*ScriptedRunner); ok {
+			runner = r
+		} else if w, ok := c.(websocket.Config); ok {
+			wsCfg = w
+		}
+	}
+
 	// ---- Connexion ----
 	socketio.On(socketio.EventConnect, func(ep *socketio.EventPayload) {
 		kws := ep.Kws
 		uuid := kws.UUID
 
-		// Résoudre le sid : priorité → Locals("sid") → Params("id") → UUID socket
+		// Résoudre le sid
 		sid := ""
 		if v := kws.Locals("sid"); v != nil {
 			if s, ok := v.(string); ok && s != "" {
@@ -171,6 +174,7 @@ func SIOHandler(cfg ...websocket.Config) func(fiber.Ctx) error {
 		hubCtx, hubCancel := context.WithCancel(context.Background())
 		hubClient := &Client{
 			sid:      sid,
+			ConnID:   guuid.New().String(),
 			message:  make(chan *Message, clientBuf),
 			channels: []string{},
 			ctx:      hubCtx,
@@ -191,8 +195,34 @@ func SIOHandler(cfg ...websocket.Config) func(fiber.Ctx) error {
 			hubClient: hubClient,
 			cancel:    hubCancel,
 			channels:  append([]string{}, initialChannels...),
+			scripted:  runner != nil,
 		}
 		sioReg.add(uuid, entry)
+
+		var scripted *Runtime
+		if runner != nil {
+			scripted = NewRuntime(hubClient, func(channel, data string) error {
+				HubInstance.Publish(&Message{
+					Channel:   channel,
+					Event:     "message",
+					Data:      data,
+					Source:    "js",
+					SenderSID: hubClient.ConnID,
+				})
+				// Also emit back to the socket for point-to-point
+				raw, _ := json.Marshal(sioMessage{Channel: channel, Event: "message", Data: data})
+				return socketio.EmitTo(uuid, raw)
+			}, func() {
+				hubCancel()
+				hubClient.closed.Store(true)
+				kws.Close()
+			}, kws)
+
+			if err := scripted.Run(runner.Code, ".", runner.Config); err != nil {
+				log.Printf("IO JS runtime error: %v", err)
+			}
+			entry.runtime = scripted
+		}
 
 		// Goroutine Hub → Socket.IO : lit les messages Hub et les envoie au client
 		go func() {
@@ -209,18 +239,20 @@ func SIOHandler(cfg ...websocket.Config) func(fiber.Ctx) error {
 					if msg.Event == "heartbeat" {
 						continue // le keepalive WS natif suffit
 					}
-					raw, err := json.Marshal(sioMessage{
-						Channel: msg.Channel,
-						Event:   msg.Event,
-						Data:    msg.Data,
-					})
-					if err != nil {
-						continue
-					}
-					// EmitTo envoie au socket identifié par son UUID
-					if err := socketio.EmitTo(uuid, raw); err != nil {
-						// Connexion fermée — arrêter la goroutine
-						return
+					// fix: unified routing — let the runtime decide which callbacks to trigger
+					if entry.runtime != nil {
+						entry.runtime.Emit("hub_message", msg)
+					} else {
+						raw, err := json.Marshal(sioMessage{
+							Channel: msg.Channel,
+							Event:   msg.Event,
+							Data:    msg.Data,
+						})
+						if err != nil {
+							continue
+						}
+						// EmitTo envoie au socket identifié par son UUID
+						_ = socketio.EmitTo(uuid, raw)
 					}
 				case <-pingTicker.C:
 					// Pas de ping manuel nécessaire : socketio gère le keepalive
@@ -266,17 +298,31 @@ func SIOHandler(cfg ...websocket.Config) func(fiber.Ctx) error {
 		}
 
 		// Pas d'action → message à publier dans le Hub
-		if msg.Channel == "" {
-			msg.Channel = "global"
-		}
-		if msg.Event == "" {
+		if entry.runtime != nil {
+			// Scripted mode: forward raw payload to onMessage
+			entry.runtime.Emit("message", string(ep.Data))
 			return
 		}
 
+		if !entry.scripted {
+			if msg.Channel == "" {
+				msg.Channel = "global"
+			}
+			if msg.Event == "" {
+				return
+			}
+			if !entry.hubClient.HasChannel(msg.Channel) {
+				log.Printf("sio: security block - client %s tried to publish to unauthorized channel %s", uuid, msg.Channel)
+				return
+			}
+		}
+
 		HubInstance.Publish(&Message{
-			Channel: msg.Channel,
-			Event:   msg.Event,
-			Data:    msg.Data,
+			Channel:   msg.Channel,
+			Event:     msg.Event,
+			Data:      msg.Data,
+			Source:    "sio",
+			SenderSID: entry.hubClient.ConnID,
 		})
 	})
 
@@ -288,12 +334,20 @@ func SIOHandler(cfg ...websocket.Config) func(fiber.Ctx) error {
 			return
 		}
 
-		// Désabonner le Client Hub de tous ses canaux
+		// 1. JS Lifecycle: Shutdown runtime (fires onClose)
+		// Important: Shutdown MUST happen before Hub unsubscription so that
+		// the onClose script can still publish to the hub.
+		if entry.runtime != nil {
+			entry.runtime.Shutdown()
+		}
+
+		// 2. Stop the traffic: Cancel context and unsubscribe
 		entry.cancel()
 		entry.hubClient.closed.Store(true)
 		for _, ch := range entry.channels {
 			HubInstance.Unsubscribe(entry.hubClient, ch)
 		}
+
 		sioReg.remove(uuid)
 	})
 
@@ -302,13 +356,15 @@ func SIOHandler(cfg ...websocket.Config) func(fiber.Ctx) error {
 		if ep.Error != nil {
 			log.Printf("sio: error socket=%s: %v", ep.SocketUUID, ep.Error)
 		}
+		if entry, ok := sioReg.get(ep.SocketUUID); ok && entry.runtime != nil {
+			if ep.Error != nil {
+				entry.runtime.Emit("error", ep.Error.Error())
+			} else {
+				entry.runtime.Emit("error", "unknown")
+			}
+			entry.runtime.Shutdown()
+		}
 	})
-
-	// Construire le handler Fiber via socketio.New
-	var wsCfg websocket.Config
-	if len(cfg) > 0 {
-		wsCfg = cfg[0]
-	}
 
 	return socketio.New(func(kws *socketio.Websocket) {
 		// socketio.New gère la boucle de lecture interne et fire les événements On().

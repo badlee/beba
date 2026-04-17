@@ -560,50 +560,55 @@ func NewHTTPDirective(config *DirectiveConfig) *HTTPDirective {
 				continue
 			}
 			if method == "SSE" {
-				sseHandler := timeoutMiddleware(func(c fiber.Ctx) error {
-					if len(handlerCode) > 0 {
-						if r.Inline {
-							vm := processor.New(config.BaseDir, c, config.AppConfig)
-							_, err := vm.RunString(`const sse = require("sse");` + "\n" + string(handlerCode))
-							if err != nil {
-								return c.Status(500).SendString("SSE Init Error: " + err.Error())
-							}
-						} else {
-							if _, err := processor.ProcessFile(string(handlerCode), c, config.AppConfig); err != nil {
-								return c.Status(500).SendString("SSE Init Error: " + err.Error())
-							}
-						}
+				var runner *sse.ScriptedRunner
+				if len(handlerCode) > 0 {
+					runner = &sse.ScriptedRunner{
+						Code:     string(handlerCode),
+						IsInline: r.Inline,
+						Protocol: "sse",
+						Config:   config.AppConfig,
 					}
-					return sse.Handler(c)
+				}
+				sseHandler := timeoutMiddleware(func(c fiber.Ctx) error {
+					return sse.Handler(c, runner)
 				})
 				all := append(handlers, sseHandler)
 				router.Get(path, all[0], all[1:]...)
 				continue
 			}
 			if method == "WS" {
-				all := append(handlers, sse.WSUpgradeMiddleware, websocket.New(func(conn *websocket.Conn) {
-					if len(handlerCode) > 0 {
-						if r.Inline {
-							vm := processor.New(config.BaseDir, nil, config.AppConfig)
-							vm.Set("conn", conn)
-							vm.RunString(string(handlerCode))
-						} else {
-							processor.ProcessFile(string(handlerCode), nil, config.AppConfig)
-						}
+				var runner *sse.ScriptedRunner
+				if len(handlerCode) > 0 {
+					runner = &sse.ScriptedRunner{
+						Code:     string(handlerCode),
+						IsInline: r.Inline,
+						Protocol: "ws",
+						Config:   config.AppConfig,
 					}
-					sse.WSHandler(conn)
+				}
+				all := append(handlers, sse.WSUpgradeMiddleware, websocket.New(func(conn *websocket.Conn) {
+					sse.WSHandler(conn, runner)
 				}))
 				router.Get(path, timeoutMiddleware(all[0].(fiber.Handler)), all[1:]...)
 				continue
 			}
 			if method == "IO" {
+				var runner *sse.ScriptedRunner
+				if len(handlerCode) > 0 {
+					runner = &sse.ScriptedRunner{
+						Code:     string(handlerCode),
+						IsInline: r.Inline,
+						Protocol: "io",
+						Config:   config.AppConfig,
+					}
+				}
 				all := append(handlers, func(c fiber.Ctx) error {
 					if websocket.IsWebSocketUpgrade(c) {
 						c.Locals("sid", c.Cookies("sid"))
 						return c.Next()
 					}
 					return fiber.ErrUpgradeRequired
-				}, sse.SIOHandler())
+				}, sse.SIOHandler(runner))
 				router.Get(path, timeoutMiddleware(all[0].(fiber.Handler)), all[1:]...)
 				continue
 			}
@@ -617,10 +622,19 @@ func NewHTTPDirective(config *DirectiveConfig) *HTTPDirective {
 						return clientID, nil
 					}
 				}
+				var runner *sse.ScriptedRunner
+				if len(handlerCode) > 0 {
+					runner = &sse.ScriptedRunner{
+						Code:     string(handlerCode),
+						IsInline: r.Inline,
+						Protocol: "mqtt",
+						Config:   config.AppConfig,
+					}
+				}
 				mqttCfg := sse.MQTTConfig{
 					Auth: authFn,
 				}
-				all := append(handlers, sse.MQTTUpgradeMiddleware, websocket.New(sse.MQTTHandler(mqttCfg)))
+				all := append(handlers, sse.MQTTUpgradeMiddleware, websocket.New(sse.MQTTHandler(mqttCfg, runner)))
 				router.Get(path, all[0], all[1:]...)
 				continue
 			}

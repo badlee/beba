@@ -170,14 +170,15 @@ func (h *MochiDBHook) updateClient(cl *mqtt.Client) {
 	rec := MQTTClient{ID: clientKey(cl), Data: data}
 	err = h.db.Save(&rec).Error
 	if err != nil {
-		h.Log.Error("failed to upsert client data", "error", err, "data", in)
+		if !strings.Contains(err.Error(), "database is closed") {
+			h.Log.Error("failed to upsert client data", "error", err, "data", in)
+		}
 	}
 }
 
 // OnDisconnect removes a client from the store if their session has expired.
 func (h *MochiDBHook) OnDisconnect(cl *mqtt.Client, _ error, expire bool) {
 	if h.db == nil {
-		h.Log.Error("", "error", storage.ErrDBFileNotOpen)
 		return
 	}
 
@@ -191,13 +192,15 @@ func (h *MochiDBHook) OnDisconnect(cl *mqtt.Client, _ error, expire bool) {
 		return
 	}
 
-	_ = h.db.Delete(&MQTTClient{ID: clientKey(cl)}).Error
+	err := h.db.Delete(&MQTTClient{ID: clientKey(cl)}).Error
+	if err != nil && !strings.Contains(err.Error(), "database is closed") {
+		h.Log.Error("failed to delete client", "error", err)
+	}
 }
 
 // OnSubscribed adds one or more client subscriptions to the store.
 func (h *MochiDBHook) OnSubscribed(cl *mqtt.Client, pk packets.Packet, reasonCodes []byte) {
 	if h.db == nil {
-		h.Log.Error("", "error", storage.ErrDBFileNotOpen)
 		return
 	}
 
@@ -216,7 +219,10 @@ func (h *MochiDBHook) OnSubscribed(cl *mqtt.Client, pk packets.Packet, reasonCod
 
 		data, err := in.MarshalBinary()
 		if err == nil {
-			_ = h.db.Save(&MQTTSubscription{ID: in.ID, Data: data}).Error
+			err = h.db.Save(&MQTTSubscription{ID: in.ID, Data: data}).Error
+			if err != nil && !strings.Contains(err.Error(), "database is closed") {
+				h.Log.Error("failed to save subscription", "error", err)
+			}
 		}
 	}
 }
@@ -224,12 +230,13 @@ func (h *MochiDBHook) OnSubscribed(cl *mqtt.Client, pk packets.Packet, reasonCod
 // OnUnsubscribed removes one or more client subscriptions from the store.
 func (h *MochiDBHook) OnUnsubscribed(cl *mqtt.Client, pk packets.Packet) {
 	if h.db == nil {
-		h.Log.Error("", "error", storage.ErrDBFileNotOpen)
 		return
 	}
-
 	for i := 0; i < len(pk.Filters); i++ {
-		_ = h.db.Delete(&MQTTSubscription{ID: subscriptionKey(cl, pk.Filters[i].Filter)}).Error
+		err := h.db.Delete(&MQTTSubscription{ID: subscriptionKey(cl, pk.Filters[i].Filter)}).Error
+		if err != nil && !strings.Contains(err.Error(), "database is closed") {
+			h.Log.Error("failed to delete subscription", "error", err)
+		}
 	}
 }
 
@@ -310,43 +317,47 @@ func (h *MochiDBHook) OnQosPublish(cl *mqtt.Client, pk packets.Packet, sent int6
 
 	data, err := in.MarshalBinary()
 	if err == nil {
-		_ = h.db.Save(&MQTTInflight{ID: in.ID, Data: data}).Error
+		err = h.db.Save(&MQTTInflight{ID: in.ID, Data: data}).Error
+		if err != nil && !strings.Contains(err.Error(), "database is closed") {
+			h.Log.Error("failed to save inflight message", "error", err)
+		}
 	}
 }
 
 // OnQosComplete removes a resolved inflight message from the store.
 func (h *MochiDBHook) OnQosComplete(cl *mqtt.Client, pk packets.Packet) {
 	if h.db == nil {
-		h.Log.Error("", "error", storage.ErrDBFileNotOpen)
 		return
 	}
-	_ = h.db.Delete(&MQTTInflight{ID: inflightKey(cl, pk)}).Error
+	err := h.db.Delete(&MQTTInflight{ID: inflightKey(cl, pk)}).Error
+	if err != nil && !strings.Contains(err.Error(), "database is closed") {
+		h.Log.Error("failed to delete inflight message", "error", err)
+	}
 }
 
 // OnQosDropped removes a dropped inflight message from the store.
 func (h *MochiDBHook) OnQosDropped(cl *mqtt.Client, pk packets.Packet) {
 	if h.db == nil {
-		h.Log.Error("", "error", storage.ErrDBFileNotOpen)
+		return
 	}
-	h.OnQosComplete(cl, pk)
 }
 
 // OnSysInfoTick stores the latest system info in the store.
 func (h *MochiDBHook) OnSysInfoTick(sys *system.Info) {
 	if h.db == nil {
-		h.Log.Error("", "error", storage.ErrDBFileNotOpen)
 		return
 	}
-
 	in := &storage.SystemInfo{
 		ID:   sysInfoKey(),
 		T:    storage.SysInfoKey,
 		Info: *sys.Clone(),
 	}
-
 	data, err := in.MarshalBinary()
 	if err == nil {
-		_ = h.db.Save(&MQTTSystemInfo{ID: in.ID, Data: data}).Error
+		err = h.db.Save(&MQTTSystemInfo{ID: in.ID, Data: data}).Error
+		if err != nil && !strings.Contains(err.Error(), "database is closed") {
+			h.Log.Error("failed to save sys info", "error", err)
+		}
 	}
 }
 

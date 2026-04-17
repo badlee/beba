@@ -8,8 +8,8 @@ Pour activer Socket.IO sur une route spécifique, utilisez la méthode `IO` dans
 
 ```hcl
 HTTP 0.0.0.0:8080
-    # Active Socket.IO sur le chemin /socket.io
-    IO /socket.io
+    # Active Socket.IO sur un chemin standard
+    IO /mon/channel/io HANDLER handlers/io_events.js
 END HTTP
 ```
 
@@ -20,7 +20,7 @@ La méthode `IO` supporte les middlewares nommés pour l'authentification et d'a
 ```hcl
 HTTP 0.0.0.0:8080
     # Avec authentification admin requise
-    IO @AUTH[redirect="/login"] /sio
+    IO @AUTH[redirect="/login"] /protected/channel/io HANDLER handlers/io_events.js
 END HTTP
 ```
 
@@ -46,7 +46,7 @@ Le module Socket.IO est nativement connecté au Hub SSE global :
 À la connexion, un client Socket.IO est automatiquement abonné aux canaux suivants :
 1. `global` : Canal public par défaut.
 2. `sid:<uuid>` : Canal privé unique correspondant à l'UUID généré par Socket.IO.
-3. `sid:<id>` : Canal privé personnalisé si un `sid` a été positionné via `c.Locals("sid")` (par exemple via un cookie ou un JWT) ou via un paramètre d'URL si la route est définie comme `IO /sio/:id`.
+3. `sid:<id>` : Canal privé personnalisé si un `sid` a été positionné via `c.Locals("sid")` (par exemple via un cookie ou un JWT) ou via un paramètre d'URL si la route est définie comme `IO /api/realtime/io/:id`.
 
 ### Abonnements dynamiques
 
@@ -60,7 +60,7 @@ Le client peut s'abonner ou se désabonner de canaux dynamiquement en envoyant d
 Bien que compatible avec le protocole WebSocket sous-jacent, le module est conçu pour être utilisé avec une approche simple de type message JSON.
 
 ```javascript
-const socket = new WebSocket('ws://localhost:8080/socket.io');
+const socket = new WebSocket('ws://localhost:8080/api/realtime/io');
 
 socket.onopen = () => {
     // S'abonner à un canal

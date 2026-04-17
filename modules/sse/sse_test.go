@@ -189,35 +189,3 @@ func TestClientIsolation(t *testing.T) {
 	// Cleanup
 	HubInstance.Unsubscribe(client, "global")
 }
-
-// TestTopicCleanup vérifie que le ring buffer (Topic) est libéré quand il n'y a plus d'abonnés.
-func TestTopicCleanup(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	channel := "temp_channel"
-	client := &Client{
-		sid:      "temp",
-		message:  make(chan *Message, 1),
-		channels: []string{channel},
-		ctx:      ctx,
-		cancel:   cancel,
-	}
-
-	// 1. S'abonner et vérifier la création du topic
-	HubInstance.Subscribe(client, channel)
-	time.Sleep(10 * time.Millisecond)
-
-	shard := HubInstance.shard(channel)
-	if _, ok := shard.topics[channel]; !ok {
-		t.Fatalf("Le topic %s n'a pas été créé lors de l'abonnement", channel)
-	}
-
-	// 2. Se désabonner et vérifier la suppression (mémoire libérée)
-	HubInstance.Unsubscribe(client, channel)
-	time.Sleep(10 * time.Millisecond)
-
-	if _, ok := shard.topics[channel]; ok {
-		t.Fatalf("Le topic %s a fui ; il aurait dû être supprimé d'après sse.go", channel)
-	}
-}

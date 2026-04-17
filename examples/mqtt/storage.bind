@@ -3,7 +3,7 @@ DATABASE "sqlite://mqtt_storage_test.db"
 END DATABASE
 
 TCP "127.0.0.1:0"
-    MQTT ":0"
+    MQTT 
         STORAGE "mqtt_db"
         
         OPTIONS DEFINE

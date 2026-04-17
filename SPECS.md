@@ -162,6 +162,9 @@ AUTH USER "admin" "{SHA256}K7gNU3sdo+OL0wNhqoVWhr3g6s1xYv72ol/pe/Unols="
 - [x] **[Technique]** Migration en bloc (Bulk Migration) : résolution automatique des dépendances de clés étrangères.
 - [x] **[Technique]** Support complet des relations (`has=one`, `many`, `many2many`) et contraintes (`OnDelete`, `OnUpdate`) dans le DSL `SCHEMA`.
 - [x] **[Technique]** Unification des protocoles `DATABASE` et `CRUD`.
+- [x] **[Technique]** Stabilisation finale du Runtime Temps Réel : thread-safety (SafeWrite), prévention des boucles via ConnID (loop filtering) et API événementielle JS unifiée (`onMessage`, `onClose`, `onError`).
+- [x] **[Technique]** Priorisation des événements : système de canaux prioritaires dans le JS runtime pour garantir l'exécution des hooks de cycle de vie (`onClose`) même en cas de saturation.
+- [x] **[Technique]** Hub Isolation & Reset : mécanisme de Reset pour les suites de tests et isolation robuste des shards.
 
 ### 7. Site Web du Projet
 - [ ] Création d'un nom de domaine en `.js`

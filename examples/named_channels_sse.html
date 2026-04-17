@@ -19,7 +19,7 @@
 
     <script>
         // Subscribe to custom channel via query param
-        const evtSource = new EventSource("/events?channels=news");
+        const evtSource = new EventSource("/api/realtime/sse?channels=news");
 
         evtSource.addEventListener("update", (event) => {
             const newElement = document.createElement("li");

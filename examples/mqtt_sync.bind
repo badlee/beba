@@ -9,18 +9,12 @@
 #   Hub -> MQTT: Publish to 'home/temp' via Hub API, see it in MQTT.
 
 HTTP 127.0.0.1:9400
-    # SSE Hub Endpoint
-    SSE /sse
-    
-    # MQTT Broker over WebSocket
-    MQTT /mqtt
-    
     # Landing Page
     GET "/" TEXT BEGIN
         "MQTT-Hub Synchronization Demo\n" +
         "-----------------------------\n" +
-        "MQTT Endpoint: ws://127.0.0.1:9400/mqtt\n" +
-        "SSE  Endpoint: http://127.0.0.1:9400/sse\n"
+        "MQTT Endpoint: ws://127.0.0.1:9400/api/realtime/mqtt\n" +
+        "SSE  Endpoint: http://127.0.0.1:9400/api/realtime/sse\n"
     END GET
 
     # Helper API to trigger Hub messages from curl

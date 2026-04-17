@@ -75,7 +75,7 @@ console.log("Cleaning up resources before exit...");
 Les fichiers dont le nom suit le pattern `_*.cron.js` sont gérés par le planificateur interne.
 
 ### Définition du planning
-La première ligne du fichier doit contenir un en-tête `CRON` suivi d'une expression standard (Minute, Heure, Jour, Mois, Jour de la semaine).
+L'en-tête `CRON` **doit impérativement se trouver sur la toute première ligne** du fichier. Elle commence par un `#` suivi du mot-clé `CRON` et d'une expression standard (Minute, Heure, Jour, Mois, Jour de la semaine).
 
 ```js
 # CRON */5 * * * *
@@ -83,7 +83,7 @@ La première ligne du fichier doit contenir un en-tête `CRON` suivi d'une expre
 console.log("Running periodic cleanup: " + new Date());
 ```
 
-Si l'en-tête est absent, le fichier n'est pas exécuter et emet un message d'erreur au démarrage.
+Si l'en-tête est absent ou n'est pas sur la première ligne, le fichier ne sera pas planifié et une erreur sera générée au démarrage.
 
 ### Syntaxe supportée
 - `*` : Toutes les valeurs.

@@ -31,19 +31,33 @@ const (
 type Module struct{}
 
 type Message struct {
-	Channel string `json:"channel,omitempty"`
-	Event   string `json:"event"`
-	Data    string `json:"data"`
-	Source  string `json:"-"` // "mqtt", "sse", "ws", "js"
+	ID        string `json:"id,omitempty"`
+	Channel   string `json:"channel,omitempty"`
+	Event     string `json:"event"`
+	Data      string `json:"data"`
+	Source    string `json:"-"` // "mqtt", "sse", "ws", "js"
+	SenderSID string `json:"-"` // prevent loops
 }
 type Client struct {
 	sid      string
+	ConnID   string // Unique per physical connection for loop prevention
 	message  chan *Message
 	channels []string
 	closed   atomic.Bool
 	ctx      context.Context
 	cancel   context.CancelFunc
 	chMu     sync.Mutex
+}
+
+func (c *Client) HasChannel(channel string) bool {
+	c.chMu.Lock()
+	defer c.chMu.Unlock()
+	for _, ch := range c.channels {
+		if ch == channel {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Client) Messages() <-chan *Message {
@@ -82,6 +96,27 @@ type Hub struct {
 }
 
 var HubInstance *Hub
+
+func (h *Hub) Reset() {
+	h.muHooks.Lock()
+	h.publishHooks = nil
+	h.muHooks.Unlock()
+
+	for i := 0; i < shardCount; i++ {
+		oldShard := h.shards[i]
+		h.shards[i] = &Shard{
+			subscribe:   make(chan subReq, 256),
+			unsubscribe: make(chan subReq, 256),
+			publish:     make(chan *Message, 256),
+			topics:      make(map[string]*Topic),
+		}
+		// We can't easily kill the old shard's goroutine without a stop channel,
+		// but since we replace it in the hub, new requests won't reach it.
+		// In a real system we'd have a context/stop signal per shard.
+		go h.shards[i].run()
+		_ = oldShard // let it fade out
+	}
+}
 
 // -------------------- MODULE API --------------------
 func (s *Module) Name() string { return "sse" }
@@ -132,7 +167,19 @@ func (s *Module) Loader(c any, vm *goja.Runtime, moduleObject *goja.Object) {
 		pubObj.Set("publish", func(call goja.FunctionCall) goja.Value {
 			event := call.Argument(0).String()
 			data := call.Argument(1).String()
-			HubInstance.Publish(&Message{Channel: channel, Event: event, Data: data})
+			sid := ""
+			if isFiberCtx {
+				if v := ctx.Locals("sse_sid"); v != nil {
+					sid = v.(string)
+				}
+			}
+			HubInstance.Publish(&Message{
+				Channel:   channel,
+				Event:     event,
+				Data:      data,
+				Source:    "js",
+				SenderSID: sid,
+			})
 			return goja.Undefined()
 		})
 		return pubObj
@@ -141,7 +188,19 @@ func (s *Module) Loader(c any, vm *goja.Runtime, moduleObject *goja.Object) {
 	sseObj.Set("publish", func(call goja.FunctionCall) goja.Value {
 		event := call.Argument(0).String()
 		data := call.Argument(1).String()
-		HubInstance.Publish(&Message{Channel: "global", Event: event, Data: data})
+		sid := ""
+		if isFiberCtx {
+			if v := ctx.Locals("sse_sid"); v != nil {
+				sid = v.(string)
+			}
+		}
+		HubInstance.Publish(&Message{
+			Channel:   "global",
+			Event:     event,
+			Data:      data,
+			Source:    "js",
+			SenderSID: sid,
+		})
 		return goja.Undefined()
 	})
 
@@ -183,6 +242,7 @@ func NewClient(sid string, channels []string) *Client {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Client{
 		sid:      sid,
+		ConnID:   uuid.New().String(),
 		message:  make(chan *Message, clientBuf),
 		channels: channels,
 		ctx:      ctx,
@@ -203,6 +263,9 @@ func (h *Hub) Unsubscribe(client *Client, channel string) {
 }
 
 func (h *Hub) Publish(msg *Message) {
+	if msg == nil || msg.Channel == "" {
+		return
+	}
 	h.shard(msg.Channel).publish <- msg
 }
 
@@ -276,7 +339,6 @@ func (s *Shard) run() {
 			HubInstance.muHooks.RUnlock()
 
 			if len(hooks) > 0 {
-				log.Printf("sse: shard publish channel=%s hooks=%d", msg.Channel, len(hooks))
 				for _, hook := range hooks {
 					hook(msg)
 				}
@@ -284,6 +346,10 @@ func (s *Shard) run() {
 
 			for c := range t.subs {
 				if c.closed.Load() {
+					continue
+				}
+				// Loop prevention: don't send back to the same connection instance
+				if msg.SenderSID != "" && msg.SenderSID == c.ConnID {
 					continue
 				}
 				select {
@@ -309,7 +375,7 @@ func (s *Shard) run() {
 }
 
 // -------------------- FIBER SSE HANDLER --------------------
-func Handler(c fiber.Ctx) error {
+func Handler(c fiber.Ctx, runner ...*ScriptedRunner) error {
 	c.Set("Content-Type", "text/event-stream")
 	c.Set("Cache-Control", "no-cache")
 	c.Set("Connection", "keep-alive")
@@ -319,20 +385,37 @@ func Handler(c fiber.Ctx) error {
 
 	// fix: context.Background() — le contexte Fiber est recyclé après le retour du handler
 	ctx, cancel := context.WithCancel(context.Background())
+	reqDone := c.Context().Done()
 	sid, channels := parseChannels(c)
 	c.Response().Header.Set("Client-Id", sid)
 	c.Response().Header.Set("X-Client-Id", sid)
 
 	client := &Client{
 		sid:      sid,
+		ConnID:   sid, // For SSE, we can keep sid if it's unique, but Handler might use sid-cookie
 		message:  make(chan *Message, clientBuf),
 		channels: channels,
 		ctx:      ctx,
 		cancel:   cancel,
 	}
+	if client.ConnID == "" || client.ConnID == sid {
+		client.ConnID = uuid.New().String()
+	}
 
 	for _, ch := range channels {
 		HubInstance.Subscribe(client, ch)
+	}
+
+	var scripted *Runtime
+	if len(runner) > 0 && runner[0] != nil {
+		r := runner[0]
+		scripted = NewRuntime(client, nil, func() {
+			cancel()
+			client.closed.Store(true)
+		}, c)
+		if err := scripted.Run(r.Code, ".", r.Config); err != nil {
+			log.Printf("SSE JS runtime error: %v", err)
+		}
 	}
 
 	return c.SendStreamWriter(func(w *bufio.Writer) {
@@ -343,7 +426,22 @@ func Handler(c fiber.Ctx) error {
 			for _, ch := range client.channels {
 				HubInstance.Unsubscribe(client, ch)
 			}
+			if scripted != nil {
+				scripted.Shutdown()
+			}
 		}()
+
+		// Update scripted runtime with real sendFn
+		if scripted != nil {
+			scripted.sendFn = func(channel, data string) error {
+				if channel == "" {
+					channel = "message"
+				}
+				fmt.Fprintf(w, "event: %s\n", channel)
+				fmt.Fprintf(w, "data: %s\n\n", data)
+				return w.Flush()
+			}
+		}
 
 		fmt.Fprintf(w, "id: %s\n\n", sid)
 		fmt.Fprintf(w, "retry: 5000\n\n")
@@ -374,15 +472,27 @@ func Handler(c fiber.Ctx) error {
 				if msg == nil {
 					return
 				}
-				batch = append(batch, msg)
-				if len(batch) >= batchSize {
-					flushBatch()
+				
+				if scripted != nil && scripted.HasSub(msg.Channel) {
+					scripted.Emit("hub_message", msg)
+				} else {
+					batch = append(batch, msg)
+					if len(batch) >= batchSize {
+						flushBatch()
+					}
 				}
 			case <-flushTicker.C:
 				if len(batch) > 0 {
 					flushBatch() // flush silencieux — pas de heartbeat ici
+				} else {
+					fmt.Fprintf(w, ": heartbeat\n\n")
+					if err := w.Flush(); err != nil {
+						return
+					}
 				}
 			case <-ctx.Done():
+				return
+			case <-reqDone:
 				return
 			}
 		}
@@ -405,8 +515,11 @@ type SSECtx interface {
 
 func parseChannels(c SSECtx) (string, []string) {
 	// Channels to subscribe to
+	sid := uuid.New().String()
 	chans := []string{"global"}
 	if l := c.Locals("channels"); l != nil {
+		// force reset channels to use only the provided ones
+		chans = []string{}
 		if s, ok := l.(string); ok && s != "" {
 			parts := strings.Split(s, ",")
 			for _, p := range parts {
@@ -415,33 +528,33 @@ func parseChannels(c SSECtx) (string, []string) {
 		} else if ss, ok := l.([]string); ok {
 			chans = append(chans, ss...)
 		}
-	}
+	} else {
 
-	sid := uuid.New().String()
-	if p := c.Params("id"); p != "" {
-		sid = p
-	} else if p := c.Query("id"); p != "" {
-		sid = p
-	} else if p := c.Cookies("sid"); p != "" {
-		sid = p
-	} else if p := c.Locals("id"); p != nil {
-		sid = p.(string)
-	}
+		if p := c.Params("id"); p != "" {
+			sid = p
+		} else if p := c.Query("id"); p != "" {
+			sid = p
+		} else if p := c.Cookies("sid"); p != "" {
+			sid = p
+		} else if p := c.Locals("id"); p != nil {
+			sid = p.(string)
+		}
 
-	chans = append(chans, "sid:"+strings.TrimSpace(sid))
+		chans = append(chans, "sid:"+strings.TrimSpace(sid))
 
-	if p := c.Params("channel"); p != "" {
-		chans = append(chans, strings.TrimSpace(p))
-	}
-	if p := c.Query("channel"); p != "" {
-		chans = append(chans, strings.TrimSpace(p))
-	}
-
-	// Parse channels from query: ?channels=news,chat
-	if qChans := c.Query("channels"); qChans != "" {
-		parts := strings.Split(qChans, ",")
-		for _, p := range parts {
+		if p := c.Params("channel"); p != "" {
 			chans = append(chans, strings.TrimSpace(p))
+		}
+		if p := c.Query("channel"); p != "" {
+			chans = append(chans, strings.TrimSpace(p))
+		}
+
+		// Parse channels from query: ?channels=news,chat
+		if qChans := c.Query("channels"); qChans != "" {
+			parts := strings.Split(qChans, ",")
+			for _, p := range parts {
+				chans = append(chans, strings.TrimSpace(p))
+			}
 		}
 	}
 	// Deduplication des channels

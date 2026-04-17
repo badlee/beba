@@ -4,7 +4,7 @@ SECURITY mqtt_filter [default]
 END SECURITY
 
 TCP "127.0.0.1:0"
-    MQTT ":0"
+    MQTT 
         SECURITY "mqtt_filter"
         
         AUTH BEGIN

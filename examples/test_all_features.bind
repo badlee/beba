@@ -9,7 +9,7 @@
 #   curl http://127.0.0.1:9200/legacy/page               → REDIRECT 301 → /v2/page
 #   curl http://127.0.0.1:9200/admin/dashboard           → REDIRECT 302 (si pas de X-Admin-Key)
 #   curl "http://127.0.0.1:9200/template?username=Alice" → TEMPLATE Mustache
-#   curl -N http://127.0.0.1:9200/events                 → SSE stream
+#   curl -N http://127.0.0.1:9200/api/realtime/sse       → SSE stream
 #   wscat -c ws://127.0.0.1:9200/ws                      → WebSocket echo
 #
 # NOTE: Dans les blocs <?js?> des TEMPLATE, utiliser `var` (pas const/let).

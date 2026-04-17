@@ -99,8 +99,17 @@ Ce document définit les règles de codage et les standards à suivre pour le pr
   - **Module DB** : API type Mongoose. Toujours privilégier les requêtes asynchrones en JS (`exec()`).
   - **Module SSE/WS** : Utiliser le Hub central pour toute communication temps-réel.
   - **Développement de Directives** : Utiliser systématiquement `RouteConfig.Content()` qui retourne désormais des `[]byte`. Ne jamais manipuler de `string` pour du contenu brut afin d'éviter les corruptions d'encodage.
-  - **Enregistrement de Protocoles** : Pour tout nouveau protocole supportant le changement de contexte (ex: `MQTT`, `DATABASE`), appeler systématiquement `RegisterProtocolKeyword(name)` lors de l'initialisation du module pour assurer que le `Parser` Binder reconnaît le mot-clé comme une directive de haut niveau.
-  - **Multiplexage** : Un bloc `TCP`/`UDP` peut contenir des sous-blocs (`HTTP`, `DTP`, etc.) pour partager un port. Si un seul protocole est présent, le peeking est sauté pour éviter les deadlocks.
+
+## 🚀 Développement Temps Réel & Handlers (SSE/WS/IO)
+
+1. **Thread-Safety** : Toute écriture vers une socket WebSocket/SSE **DOIT** passer par une méthode synchronisée (ex: `SafeWrite`) pour éviter les panics de concurrence.
+2. **Loop Prevention** : Le Hub utilise systématiquement le `ConnID` (UUID unique par connexion) au lieu du `SID` (session utilisateur) pour filtrer les messages sortants lors d'un broadcast. Le runtime JS ignore automatiquement les messages dont le `SenderSID` correspond à son propre `ConnID`.
+3. **Control Priority** : Les événements de cycle de vie (`onClose`, `onError`, `shutdown`) DOIVENT être envoyés via le canal `lifecycle` prioritaire pour garantir leur exécution même lors d'un pic de messages applicatifs.
+4. **Cleanup** : Toujours enregistrer un handler `onClose` pour libérer les ressources ou notifier les autres clients du hub lors d'une déconnexion. Le moteur garantit une tentative d'exécution du `onClose` avant la destruction du contexte.
+
+## 📁 Organisation des Fichiers et Conventions de Nommage
+- **Enregistrement de Protocoles** : Pour tout nouveau protocole supportant le changement de contexte (ex: `MQTT`, `DATABASE`), appeler systématiquement `RegisterProtocolKeyword(name)` lors de l'initialisation du module pour assurer que le `Parser` Binder reconnaît le mot-clé comme une directive de haut niveau.
+- **Multiplexage** : Un bloc `TCP`/`UDP` peut contenir des sous-blocs (`HTTP`, `DTP`, etc.) pour partager un port. Si un seul protocole est présent, le peeking est sauté pour éviter les deadlocks.
 
 ## 2. Standards JavaScript (Server-side Logic)
 - **Modules** : Utiliser `require("module_name")` pour importer les modules natifs (`db`, `sse`, `cookies`, `storage`, etc.).
@@ -169,4 +178,3 @@ func (m *Model) buildStructType(forMigration bool) reflect.Type {
     return reflect.StructOf(fields)
 }
 ```
-

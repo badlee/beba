@@ -32,8 +32,9 @@ func TestWSUpgradeMiddleware(t *testing.T) {
 // TestWSHandler focuses on the bridging logic.
 // We'll use a real listener to test the websocket connection.
 func TestWSHandler(t *testing.T) {
+	resetHub()
 	app := fiber.New()
-	app.Get("/ws", fiberwebsocket.New(WSHandler))
+	app.Get("/ws", WSUpgradeMiddleware, fiberwebsocket.New(func(conn *fiberwebsocket.Conn) { WSHandler(conn) }))
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

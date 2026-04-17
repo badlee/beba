@@ -29,7 +29,7 @@
     <script>
         document.getElementById("sid").textContent = "{{sessionID}}";
 
-        const evtSource = new EventSource("/events");
+        const evtSource = new EventSource("/api/realtime/sse");
         evtSource.addEventListener("private", (event) => {
             const newElement = document.createElement("li");
             newElement.textContent = "Private: " + event.data;

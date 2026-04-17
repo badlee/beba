@@ -8,7 +8,7 @@ SECURITY "mqtt_security"
 END SECURITY
 
 TCP "127.0.0.1:0"
-    MQTT ":0"
+    MQTT 
         STORAGE "mqtt_db"
         SECURITY "mqtt_security"
         

@@ -14,7 +14,7 @@
     Basculez en mode **Headless CMS** instantanément. Le module **DATABASE** unifie désormais le moteur CRUD et les schémas dynamiques. Il génère automatiquement vos API REST et une interface d'administration temps-réel (propulsée par HTMX + SSE), gérant nativement les relations (`has=one`, `many`, `many2many`) et les migrations différées sécurisées (Dual Struct).
     
 *   **📡 Hub Realtime Massivement Scalable (+1M de clients)**  
-    Le cœur du système : un hub de messagerie haute performance capable de gérer **plus d'un million de clients simultanément**. Support natif de **SSE**, **WebSocket**, **MQTT over WebSocket** et **Socket.IO**. Grâce au **Binder** innovant, multiplexez ces protocoles sur un seul port pour une interopérabilité totale.
+    Le cœur du système : un **Sharded Hub** v3 ultra-performant capable de gérer **plus d'un million de clients simultanément**. Support natif et interopérable de **SSE**, **WebSocket**, **MQTT 5.0** et **Socket.IO**. Grâce au scripting JS événementiel unifié (`onMessage`, `onClose`), gérez votre logique temps-réel avec une simplicité déconcertante, tout en bénéficiant de protections avancées contre les boucles d'écho infinies et d'une priorité stricte pour les événements de cycle de vie.
     
 *   **🛡️ Sentinelle de Sécurité intégrée**  
     Allez au-delà du simple HTTPS. Profitez d'une protection en profondeur à 5 couches : filtrage IP/Géo au niveau socket (L4), détection de bots par Proof-of-Work, et un WAF Coraza (L7) natif pour bloquer SQLi et XSS avant qu'ils ne touchent votre code.

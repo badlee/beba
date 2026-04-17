@@ -59,12 +59,27 @@ The following objects and functions are available in the server-side JS environm
 - `remove(name)`: Clears a cookie.
 - `has(name)`: Checks if a cookie exists.
 
-### `sse` Methods
-The `sse` object connects to the high-performance Sharded Hub (supporting 1M+ concurrent connections / WebSockets):
-- `publish(event, data)`: Broadcasts a message to the `global` channel.
-- `to(channel).publish(event, data)`: Broadcasts a message to a specific named channel.
-- `attach(sid)`: Binds the current request context to a client session ID (useful in custom JS route handlers).
-- `send(event, data)`: Sends a private message directly to the client ID attached via `attach()` or via the `sid` cookie.
+### Real-time & Hub Methods
+The server uses a high-performance **Sharded Hub** (supporting 1M+ concurrent connections / WebSockets / Socket.IO / MQTT). In real-time handlers, the following functions are available globally:
+
+- `onMessage(callback)`: Registers a handler for incoming messages from the client. The callback receives the raw message data (string or object).
+- `onClose(callback)`: Registers a handler for when the connection is closed. Ideal for cleanup or final status updates.
+- `onError(callback)`: Registers a handler for connection errors.
+- `send(data, channel="global")`: Sends a message back to the current client.
+- `publish(channel, data)`: Broadcasts a message to a specific channel in the Hub.
+- `subscribe(channel, callback?)`: Subscribes the current connection to a channel. If a callback is provided, it will be triggered for messages on that channel.
+- `unsubscribe(channel)`: Unsubscribes from a channel.
+
+### Real-time Context (`ctx`)
+When running inside a WebSocket, Socket.IO, or MQTT handler, the `ctx` object provides connection-specific metadata:
+- `ctx.id`: The session ID of the client (often persistent across reconnections).
+- `ctx.connID`: The unique physical connection ID (UUID).
+- `ctx.query(key)`: Access to query parameters from the initial handshake.
+- `ctx.params(key)`: Access to route parameters.
+- `ctx.locals(key)`: Access to variables passed from previous middlewares.
+
+> [!TIP]
+> **Echo Prevention**: The Hub automatically filters out messages where the `SenderSID` matches the receiver's `ConnID`. This prevents infinite feedback loops when a script publishes a message it just received.
 
 
 ### `include(file)`

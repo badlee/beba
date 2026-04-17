@@ -3,20 +3,13 @@
 
 HTTP 0.0.0.0:8080
     # 1. Server-Sent Events (SSE)
-    # Accessible via: new EventSource("/events")
-    SSE /events
-
+    #   Accessible via: new EventSource("/api/realtime/sse")
     # 2. Native WebSockets (WS)
-    # Accessible via: new WebSocket("ws://localhost:8080/ws")
-    WS /ws
-
+    #   Accessible via: new WebSocket("ws://localhost:8080/api/realtime/ws")
     # 3. Socket.IO (IO)
-    # Compatible with Socket.IO clients, mapped to the Hub
-    IO /socket.io
-
+    #   Compatible with Socket.IO clients, mapped to the Hub accessible via `/api/realtime/io`
     # 4. MQTT over WebSockets
-    # Accessible via MQTT clients on ws://localhost:8080/mqtt
-    MQTT /mqtt [auth=false]
+    #   Accessible via MQTT clients on ws://localhost:8080/api/realtime/mqtt
 
     # Dashboard to see it in action
     GET "/" TEMPLATE text/html BEGIN
@@ -28,9 +21,9 @@ HTTP 0.0.0.0:8080
             <p>Publish a message via any protocol, it will be received by all!</p>
             <script>
                 // Example: Listening via SSE
-                const es = new EventSource("/events");
+                const es = new EventSource("/api/realtime/sse");
                 es.onmessage = (e) => console.log("SSE Received:", e.data);
-
+                
                 // Example: Publishing via Fetch to the Hub (SSE module provides sse global in scripts)
                 // Note: In server-side scripts, use sse.publish("global", "evt", "data")
             </script>

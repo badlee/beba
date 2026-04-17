@@ -15,7 +15,7 @@ import (
 
 func TestSSEHandler(t *testing.T) {
 	app := fiber.New()
-	app.Get("/sse", Handler)
+	app.Get("/sse", func(c fiber.Ctx) error { return Handler(c) })
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
