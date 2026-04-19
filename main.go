@@ -36,6 +36,9 @@ import (
 	"beba/processor"
 )
 
+var Version = "dev"
+
+
 // TODO: add fs modules
 // TODO: add fetch modules : http://, https://, ftp://, ftps://, sftp://, file:// (limited to the current directory)
 // TODO: add net modules : TCP, UDP socket client
@@ -84,6 +87,12 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+
+	if cfg.ShowVersion {
+		fmt.Printf("beba version %s\n", Version)
+		os.Exit(0)
+	}
+
 
 	// Fichiers de log — tracés pour flush/close propre à l'arrêt
 	var logFiles []*os.File

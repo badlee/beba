@@ -97,6 +97,9 @@ type AppConfig struct {
 
 	// ---- cron ----------------------------------------------------------
 	HasSchedule bool `json:"schedule" yaml:"schedule" toml:"schedule" mapstructure:"schedule" env:"SCHEDULE" flag:"schedule" default:"true" desc:"Enable background cron tasks"`
+
+	// ---- version -------------------------------------------------------
+	ShowVersion bool `json:"version,omitempty" yaml:"version,omitempty" toml:"version,omitempty" mapstructure:"version" env:"VERSION" flag:"version|v" desc:"Show version and exit"`
 }
 
 // DefaultConfig retourne la configuration par défaut.
