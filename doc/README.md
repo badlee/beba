@@ -8,7 +8,8 @@ Welcome to the **beba** official documentation. This server is a high-speed, mul
 
 - **[CLI Reference](CLI.md)**: Command-line arguments, environment variables, and startup flags.
 - **[Binder Guide (.bind)](BINDER.md)**: Learn how to use the declarative DSL to configure your entire stack in a single file.
-- **[JS Scripting API](JS_SCRIPTING.md)**: Documentation for the server-side JavaScript environment, **dynamic global injections**, and native modules.
+- **[JS Scripting API](JS_SCRIPTING.md)**: Documentation for the server-side JavaScript environment, **dynamic global database injection**, and native modules.
+- **[Persistence by Default](DATABASE.md#the-default-database)**: Every project automatically starts with a ready-to-use SQLite database at `./.data/beba.db`.
 - **[Templating System](TEMPLATING.md)**: Dynamic HTML generation using `<?js ?>` tags and Mustache syntax.
 
 ---

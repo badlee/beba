@@ -162,7 +162,7 @@ The environment provides several internal modules. Some are available as **Globa
 | :--- | :--- | :--- | :--- |
 | **Console** | Built-in | Global | Core logging interface. |
 | **Web Fetch** | Built-in | Global | Standard HTTP/HTTPS requests. |
-| **Database** | **Conditional** | Global / `db` | Unified ORM and CRUD engine. |
+| **Database** | Built-in | Global / `db` | Unified ORM and CRUD engine (auto-init). |
 | **Mail** | **Conditional** | Global | SMTP and Mail-API bridge. |
 | **Payment** | **Conditional** | Global | Integrated payment gateways. |
 | **File System** | Native | `fs` | Native file operations (Promise compatible). |
@@ -176,7 +176,7 @@ The environment provides several internal modules. Some are available as **Globa
 ## 🌍 Global & Injected Objects Details
 
 ### `database` (Global)
-In JavaScript, all database and CRUD features are accessed via the `database` global object. This object is injected if at least one `DATABASE` directive is defined.
+In JavaScript, all database and CRUD features are accessed via the `database` global object. This object is always injected and available because the server automatically initializes a default SQLite database (`.data/beba.db`) behind the scenes upon startup.
 
 ```javascript
 const db = database.connection("my_inventory") 
@@ -234,7 +234,7 @@ Access to the high-performance communication Hub.
 
 ### 🗄️ Database & CRUD (`database`)
 
-The `database` global object provides unified access to both high-level CRUD operations and identity management. It is injected if at least one `DATABASE` directive is defined.
+The `database` global object provides unified access to both high-level CRUD operations and identity management. It is always available by default due to the server's auto-initialization of `.data/beba.db`.
 
 #### **Authentication & Identity**
 - **`login(identity, options)`**: Authenticates a user.

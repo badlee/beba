@@ -18,9 +18,22 @@ END DATABASE
 ```
 
 ### Supported Providers
+- **Default Database**: `":default:"` or `""` (Targets the auto-generated default DB at `./.data/beba.db`)
 - **SQLite**: `sqlite:///path/to/db.sqlite` or `:memory:`
 - **PostgreSQL**: `postgres://user:pass@localhost:5432/mydb`
 - **MySQL / MariaDB**: `mysql://user:pass@localhost:3306/mydb`
+
+### The Default Database
+By default, the server automatically initializes a SQLite database located at `./.data/beba.db`. This database is immediately ready for use in your JavaScript scripts via `database.default`, even without any `DATABASE` binder directive!
+
+If you wish to attach schemas or configure this default database from your `.bind` files, simply use the `DATABASE ":default:"` shorthand instead of a strict path:
+```hcl
+DATABASE ":default:"
+    SCHEMA products DEFINE
+        FIELD name string
+    END SCHEMA
+END DATABASE
+```
 
 ---
 

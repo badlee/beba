@@ -9,7 +9,7 @@ Le format `.bind` permet de définir des serveurs réseaux, des protocoles et du
 ```hcl
 REGISTER PROTOCOL [NAME] "[js_file]"   // Enregistre un protocole JS custom (optionnel, niveau fichier)
 
-DATABASE [provider_url]                // Connexion DB (SQLite, MySQL, Postgres)
+DATABASE [provider_url]                // Connexion DB (SQLite, MySQL, Postgres, ':default:')
 PAYMENT [provider_url]                 // Connexion Paiement (Stripe, MoMo, X402)
 SECURITY [name]                        // Profil de sécurité réutilisable
 

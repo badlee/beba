@@ -160,9 +160,10 @@ func (d *DatabaseDirective) Start() ([]net.Listener, error) {
 	query.Set("name", d.config.Args.Get("name", defaultName))
 	query.Set("url", dbURL)
 	if query.Get("name") == defaultName && db.GetConnection() == nil {
-		query.Set("default", "true")
-	} else if query.Get("name") == defaultName {
-		return nil, fmt.Errorf("DATABASE failed to connect: %v", "default database already defined")
+		query.Set("default", "true") // Still automatically make it default if none exists
+	} else if query.Get("name") == defaultName && !isTrue(query.Get("default")) {
+		// Only error out if they name it DEFAULT but explicitly say default=false (which makes no sense) or if we want to ensure we don't accidentally override.
+		// Wait, if it's named DEFAULT, and it's already defined, and another directive ALSO says DEFAULT but doesn't specify default:true, we should probably just let it replace it if they explicitly specify default=true.
 	}
 
 	gormDB, err := db.FromURL(dbURL)

@@ -1,8 +1,8 @@
 package db
 
 import (
-	"fmt"
 	"beba/modules"
+	"fmt"
 	"net/url"
 	"strconv"
 	"strings"
@@ -42,7 +42,19 @@ func FromURL(dbURL string) (db *gorm.DB, err error) {
 	}
 	fmt.Printf("DATABASE: FromURL received %s\n", dbURL)
 	dbURL = strings.ToLower(strings.TrimSpace(dbURL))
-	if dbURL == "" || dbURL == ":memory:" || strings.HasPrefix(dbURL, "file::memory:") || strings.HasPrefix(dbURL, "sqlite::memory:") || strings.HasPrefix(dbURL, "sqlite://:memory:") {
+	if dbURL == "" || dbURL == ":default:" || dbURL == "sqlite://:default:" {
+		// Attempt to grab the default connection
+		if c := GetDefaultConnection(); c != nil && c.GetDB() != nil {
+			return c.GetDB(), nil
+		}
+		// Fallback to ensuring it's created
+		if c := EnsureDefaultDatabase(); c != nil && c.GetDB() != nil {
+			return c.GetDB(), nil
+		}
+		return nil, fmt.Errorf("failed to get or create default database for %s", dbURL)
+	}
+
+	if dbURL == ":memory:" || strings.HasPrefix(dbURL, "file::memory:") || strings.HasPrefix(dbURL, "sqlite::memory:") || strings.HasPrefix(dbURL, "sqlite://:memory:") {
 		return gorm.Open(sqlite.New(sqlite.Config{DriverName: "sqlite", DSN: ":memory:"}), cfg)
 	}
 	u, err := url.Parse(dbURL)

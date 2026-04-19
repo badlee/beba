@@ -1,8 +1,10 @@
 package db
 
 import (
-	"fmt"
 	"beba/plugins/js"
+	"fmt"
+	"log"
+	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -284,4 +286,29 @@ func HasDefaultConnection() bool {
 }
 func GetDefaultlDatabaseName() string {
 	return DefaultConnName
+}
+
+// EnsureDefaultDatabase creates a default SQLite database in ./.data/data.db if no default exists.
+// It should be called after the process's working directory matches the project root.
+func EnsureDefaultDatabase() *Connection {
+	conn := GetConnection()
+	if conn != nil {
+		return conn // already exists
+	}
+
+	err := os.MkdirAll("./.data", 0755)
+	if err != nil {
+		log.Printf("Failed to create ./.data directory for default database: %v", err)
+		return nil
+	}
+
+	gormDB, err := FromURL("sqlite://./.data/beba.db")
+	if err != nil || gormDB == nil {
+		log.Printf("Failed to lazy load default database: %v", err)
+		return nil
+	}
+
+	conn = NewConnection(gormDB, DefaultConnName)
+	RegisterDefaultConnection(conn)
+	return conn
 }

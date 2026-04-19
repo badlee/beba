@@ -2,6 +2,7 @@ package binder
 
 import (
 	"beba/modules/crud"
+	"beba/modules/db"
 	"testing"
 )
 
@@ -237,5 +238,112 @@ END DATABASE
 	// Also check Uppercase constraints default
 	if userSchema["roles"].OnDelete != "SET NULL" {
 		t.Errorf("Expected default OnDelete 'SET NULL', got '%s'", userSchema["roles"].OnDelete)
+	}
+}
+
+func TestDatabaseDefaultKeyword(t *testing.T) {
+	// Manually set a default connection in memory to avoid touching the disk
+	import_db := true
+	_ = import_db
+
+	content := `
+DATABASE ":default:"
+    SCHEMA Item DEFINE
+        FIELD name string
+    END SCHEMA
+END DATABASE
+
+DATABASE "sqlite://:default:"
+    SCHEMA Person DEFINE
+        FIELD age number
+    END SCHEMA
+END DATABASE
+`
+	config, _, err := ParseConfig(content)
+	if err != nil {
+		t.Fatalf("ParseConfig failed: %v", err)
+	}
+
+	var dbItems []*DatabaseDirective
+	for _, g := range config.Groups {
+		if g.Directive == "DATABASE" {
+			for _, item := range g.Items {
+				if d, err := NewDatabaseDirective(item); err == nil {
+					dbItems = append(dbItems, d.(*DatabaseDirective))
+				}
+			}
+		}
+	}
+
+	if len(dbItems) != 2 {
+		t.Fatalf("Expected 2 DATABASE directives, got %d", len(dbItems))
+	}
+
+	for _, dbDir := range dbItems {
+		if _, err := dbDir.Start(); err != nil {
+			t.Fatalf("dbDir.Start failed: %v", err)
+		}
+		defer dbDir.Close()
+	}
+
+	// Verify the items were added correctly. They should be applying to the default connection.
+	if _, ok := dbItems[0].Schemas["Item"]; !ok {
+		t.Errorf("Expected Item schema to be defined in the first directive")
+	}
+
+	if _, ok := dbItems[1].Schemas["Person"]; !ok {
+		t.Errorf("Expected Person schema to be defined in the second directive")
+	}
+}
+
+func TestDatabaseDefaultOverride(t *testing.T) {
+	// 1. Setup an initial default connection
+	initialDB, _ := db.FromURL("sqlite://:memory:")
+	initialConn := db.NewConnection(initialDB, "DEFAULT")
+	db.RegisterDefaultConnection(initialConn)
+
+	if db.GetDefaultConnection() != initialConn {
+		t.Fatal("Initial default connection registration failed")
+	}
+
+	// 2. Define a new DATABASE directive that says default=true
+	content := `
+DATABASE "sqlite://:memory:" default=true
+    NAME override_db
+    SCHEMA NewSchema DEFINE
+        FIELD name string
+    END SCHEMA
+END DATABASE
+`
+	config, _, err := ParseConfig(content)
+	if err != nil {
+		t.Fatalf("ParseConfig failed: %v", err)
+	}
+
+	item := config.Groups[0].Items[0]
+	directive, err := NewDatabaseDirective(item)
+	if err != nil {
+		t.Fatalf("NewDatabaseDirective failed: %v", err)
+	}
+
+	d := directive.(*DatabaseDirective)
+	if _, err := d.Start(); err != nil {
+		t.Fatalf("Directive Start failed: %v", err)
+	}
+	defer d.Close()
+
+	// 3. Verify the default connection has been replaced
+	currentDefault := db.GetDefaultConnection()
+	if currentDefault == initialConn {
+		t.Error("Expected default connection to be overridden, but it is still the initial one")
+	}
+
+	if currentDefault.Name() != "DEFAULT" {
+		t.Errorf("Expected new default connection name to be 'DEFAULT', got %q", currentDefault.Name())
+	}
+	
+	// Verify it still has the NAME argument as an alias
+	if db.GetConnection("OVERRIDE_DB") != currentDefault {
+		t.Error("Expected connection to also be registered under its provided name 'OVERRIDE_DB'")
 	}
 }

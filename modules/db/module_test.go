@@ -233,6 +233,40 @@ func TestDBModule_Model_CRUD(t *testing.T) {
 	}
 }
 
+func TestJSDefaultAccess(t *testing.T) {
+	// Setup a default connection
+	dbConn, _ := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	conn := NewConnection(dbConn, "DEFAULT")
+	RegisterDefaultConnection(conn)
+	defer conn.Close()
+
+	vm := processor.NewEmpty()
+	vm.AttachGlobals()
+	mod := &Module{}
+
+	// Manual registration to emulate the binder injection
+	obj := mod.ToJSObject(vm.Runtime)
+	vm.Set("database", obj)
+
+	// Test access via database.default
+	val, err := vm.RunString(`database.default !== undefined`)
+	if err != nil {
+		t.Fatalf("JS access check failed: %v", err)
+	}
+	if !val.ToBoolean() {
+		t.Error("Expected database.default to be defined")
+	}
+
+	// Test if it's actually our connection
+	val, err = vm.RunString(`database.default.name()`)
+	if err != nil {
+		t.Fatalf("JS name call failed: %v", err)
+	}
+	if val.String() != "DEFAULT" {
+		t.Errorf("Expected connection name 'DEFAULT', got %q", val.String())
+	}
+}
+
 // --------------------------------------------------------------------------
 // helpers
 // --------------------------------------------------------------------------

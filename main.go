@@ -29,6 +29,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"beba/modules/binder"
+	"beba/modules/db"
 	"beba/modules/sse"
 	appconfig "beba/plugins/config"
 	"beba/plugins/httpserver"
@@ -223,6 +224,9 @@ func main() {
 			appconfig.LoadEnvFiles(cfg.EnvFiles)
 		}
 	}
+
+	// S'assurer qu'il y a une base de données par défaut dans le répertoire racine ./
+	db.EnsureDefaultDatabase()
 
 	// -------------------- MODE BINDER --------------------
 	if len(cfg.BindFiles) > 0 {
