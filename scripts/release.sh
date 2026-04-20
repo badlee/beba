@@ -153,7 +153,7 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
                 echo "Error: 'gh' CLI not found. Please install it to create GitHub releases."
             else
                 echo "Creating GitHub release $VERSION..."
-                gh release create "$VERSION" "$OUT_DIR"/* --title "$VERSION" --notes-file "$NOTES_FILE"
+                gh release create "$VERSION" "$OUT_DIR/*$VERSION*" --title "$VERSION" --notes-file "$NOTES_FILE"
                 echo "GitHub release created successfully!"
             fi
         fi
