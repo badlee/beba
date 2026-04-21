@@ -40,6 +40,34 @@ REGISTER PRELOAD BEGIN [arguments...]?
  // JS CODE
 END REGISTER
 
+// Configuration globale d'authentification et OAuth2
+AUTH [name] DEFINE [arguments...]?
+    SECRET [string] // Optionnel: secret pour tokens JWT/Sessions
+    DATABASE [provider_url] // Optionnel: base de données pour utilisateurs
+    
+    // -- Stratégies locales --
+    AUTH [JSON|YAML|TOML|ENV] [filepath]
+    AUTH CSV [filepath]
+    AUTH USER [USER_NAME] [PWD]
+    AUTH HANDLER [filepath] [arguments...]?
+    AUTH BEGIN [arguments...]?
+        // js code
+    END AUTH
+
+    // -- Clients OAuth2 (Connexion via un tiers) --
+    STRATEGY [name] DEFINE [arguments...]? // ex: google, github
+        CLIENTID [string]
+        CLIENTSECRET [string]
+        REDIRECT [url]
+        SCOPE [string...]
+    END STRATEGY
+
+    // -- Beba comme Fournisseur OAuth2 --
+    SERVER DEFINE
+        // Configurations du serveur
+    END SERVER
+END AUTH
+
 // Protocol/Custom Directives
 [PROTOCOL] [literal quoted_string or uri/url] [arguments...]? // filepath est optionel (si defini il charge le js protocol ), une address c'est ipv4:port ou ipv6:port ou socket_filepath
     // configuration lie au block
@@ -55,13 +83,19 @@ END REGISTER
     DEL [KEY]  // optionel supprime des configurations 
 
     // Authentification
-    AUTH [JSON|YAML|TOML|ENV] [filepath] // fichier cle/valeur ou les cle sont les username et les valeurs sont les pwd (plain, bcrypt)
-    AUTH CSV [filepath] // fichier csv deux columns "username;pwd" ou les pwd sont plain ou bcrypt
-    AUTH USER [USER_NAME] [PWD] // declare un utilisateur ou les PWD est plain ou bcrypt, peut etre repeter
-    AUTH HANDLER [filepath] [arguments...]? // js file, expose user et pwd au js, `allow()` pour authorise, `reject(message)` pour rejeter
+    AUTH [name] [path]? // Monte le gestionnaire global défini par `AUTH [name] DEFINE`. Par défaut le path est `/auth`.
+    
+    // Les déclarations inline suivantes sont supportées pour la rétrocompatibilité
+    // ou des protocoles spécifiques (ex: DTP) mais leur usage est découragé au profit du gestionnaire global.
+    AUTH [JSON|YAML|TOML|ENV] [filepath] // fichier cle/valeur
+    AUTH CSV [filepath] // fichier csv
+    AUTH USER [USER_NAME] [PWD] // declare un utilisateur
+    AUTH HANDLER [filepath] [arguments...]? // js file
     AUTH BEGIN [arguments...]? 
-        // js code, expose user et pwd au js, `allow()` pour authorise, `reject(message)` pour rejeter
+        // js code
     END AUTH
+    
+    DISABLE [TYPE] [FEATURE] // Deactive a core feature (ex. DEFAULT API, DEFAULT REALTIME, ADMIN UI)
 
     // les custom directives  (l'interpretation depend du protocol, Routes *RouteConfig)
      

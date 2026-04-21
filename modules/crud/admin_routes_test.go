@@ -31,7 +31,7 @@ func TestAdminRoutes_LoginRendering(t *testing.T) {
 	// but mountAdmin takes *httpserver.HTTP.
 	// Since httpserver.HTTP is a wrapper around fiber.App, we can use it.
 	h := &httpserver.HTTP{App: app}
-	mountAdmin(h, prefix, db, "secret")
+	mountAdmin(h, prefix, prefix, db, "secret")
 
 	// 1. Test GET /login rendering
 	req := httptest.NewRequest("GET", prefix+"/_admin/login", nil)
@@ -50,7 +50,7 @@ func TestAdminRoutes_ProtectedRedirect(t *testing.T) {
 	app := fiber.New()
 	prefix := "/api/crud"
 	h := &httpserver.HTTP{App: app}
-	mountAdmin(h, prefix, db, "secret")
+	mountAdmin(h, prefix, prefix, db, "secret")
 
 	// 1. Test GET / dashboard redirects to /login if not authenticated
 	req := httptest.NewRequest("GET", prefix+"/_admin/", nil)
@@ -75,7 +75,7 @@ func TestAdminRoutes_DashboardWithAuth(t *testing.T) {
 	prefix := "/api/crud"
 	h := &httpserver.HTTP{App: app}
 	secret := "secret"
-	mountAdmin(h, prefix, db, secret)
+	mountAdmin(h, prefix, prefix, db, secret)
 
 	// Create root user
 	u := &User{ID: "root", Username: "admin", IsActive: true}

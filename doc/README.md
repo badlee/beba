@@ -16,7 +16,7 @@ Welcome to the **beba** official documentation. This server is a high-speed, mul
 
 ## 🔌 Networking & Protocols
 
-- **[HTTP / HTTPS](HTTP.md)**: Documentation for the web engine, SSL/TLS (Auto-SSL), and advanced middlewares including **Automated PDF Generation**.
+- **[HTTP / HTTPS](HTTP.md)**: Documentation for the web engine, SSL/TLS (Auto-SSL), **Feature Deactivation (DISABLE)**, and advanced middlewares including **Automated PDF Generation**.
 - **[Real-time Hub (SSE/WS/Socket.IO)](IO.md)**: Our high-performance sharded hub for handling 1M+ concurrent connections.
 - **[MQTT Broker](MQTT.md)**: Integrated IoT messaging with native database persistence.
 - **[DTP Protocol](DTP.md)**: Optimized protocol for high-frequency hardware data transfer.
@@ -27,7 +27,7 @@ Welcome to the **beba** official documentation. This server is a high-speed, mul
 ## 🛡️ Security (Sentinel Architecture)
 
 - **[Security & WAF](SECURITY.md)**: Comprehensive guide on the 5-layer Sentinel defense, including Network Filtering (L1), Coraza WAF (L3), Bot Defense (L4), and Signed Auditing (L5).
-- **[Authentication](AUTH.md)**: Strategies for securing your routes (Basic, JWT, OAuth2, and scripted).
+- **[Authentication](AUTH.md)**: Secure your routes with the Unified Global Identity Manager (`AUTH [name] DEFINE`), supporting local users, scripts, and OAuth2 Client/Provider capabilities.
 
 ---
 
@@ -41,5 +41,5 @@ Welcome to the **beba** official documentation. This server is a high-speed, mul
 ## 🌐 Advanced Management
 
 - **[Virtual Hosting (VHost)](VHOST.md)**: Multi-domain management and SSL termination.
-- **[Admin Interface](ADMIN.md)**: Guide to the built-in web dashboard for monitoring and management.
+- **[Admin Interface](ADMIN.md)**: Guide to the built-in web dashboard on `/_admin` (deactivatable via `DISABLE ADMIN UI`).
 - **[Routing System](ROUTER.md)**: Deep dive into path matching, rewrites, and redirects.

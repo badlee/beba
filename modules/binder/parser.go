@@ -107,6 +107,9 @@ type parseContext struct {
 
 	// Stack for DEFINE groups
 	groupStack []*RouteConfig
+
+	currentAuth   *AuthManagerConfig
+	currentOAuth2 *OAuth2ClientConfig
 }
 
 type inlineTarget struct {
@@ -125,7 +128,9 @@ func (t *inlineTarget) clear() { *t = inlineTarget{} }
 // ─────────────────────────────────────────────────────────────────────────────
 
 func parseLines(lines []parsedLine, allFiles map[string]bool) (*Config, []string, error) {
-	ctx := &parseContext{config: &Config{}}
+	ctx := &parseContext{config: &Config{
+		AuthManagers: make(map[string]*AuthManagerConfig),
+	}}
 
 	for _, pl := range lines {
 		line := strings.TrimSpace(pl.content)
@@ -240,6 +245,23 @@ func (ctx *parseContext) handleEnd(toks []string, pl parsedLine) error {
 		ctx.parentProto = nil
 		ctx.envPrefix = ""
 	}
+
+	// 5. Close AUTH manager
+	if ctx.currentAuth != nil && endKw == "AUTH" {
+		ctx.config.AuthManagers[ctx.currentAuth.Name] = ctx.currentAuth
+		ctx.currentAuth = nil
+		return nil
+	}
+
+	// 6. Close OAUTH2 client
+	if ctx.currentOAuth2 != nil && (endKw == "OAUTH2" || endKw == "STRATEGY") {
+		if ctx.currentAuth != nil {
+			ctx.currentAuth.Clients = append(ctx.currentAuth.Clients, ctx.currentOAuth2)
+		}
+		ctx.currentOAuth2 = nil
+		return nil
+	}
+
 	return nil
 }
 
@@ -251,6 +273,13 @@ func (ctx *parseContext) handleTopLevel(toks []string, pl parsedLine) error {
 	cmd := strings.ToUpper(toks[0])
 	if cmd == "REGISTER" {
 		ctx.handleRegister(toks, pl)
+		return nil
+	}
+	if cmd == "AUTH" && len(toks) >= 3 && strings.ToUpper(toks[2]) == "DEFINE" {
+		ctx.currentAuth = &AuthManagerConfig{
+			Name:    toks[1],
+			BaseDir: filepath.Dir(pl.file),
+		}
 		return nil
 	}
 	if len(toks) < 2 {
@@ -344,9 +373,117 @@ func (ctx *parseContext) handleInsideGroup(toks []string, pl parsedLine) error {
 	case "DEL":
 		return ctx.parseDEL(toks)
 	case "AUTH":
+		if ctx.currentAuth != nil {
+			return ctx.handleInsideAuth(toks, pl)
+		}
 		return ctx.parseAUTH(toks)
 	}
+
+	if ctx.currentAuth != nil {
+		return ctx.handleInsideAuth(toks, pl)
+	}
+
 	return ctx.parseRoute(toks, pl)
+}
+
+func (ctx *parseContext) handleInsideAuth(toks []string, pl parsedLine) error {
+	cmd := strings.ToUpper(toks[0])
+
+	if ctx.currentOAuth2 != nil {
+		return ctx.handleInsideOAuth2(toks, pl)
+	}
+
+	switch cmd {
+	case "DATABASE":
+		if len(toks) > 1 {
+			ctx.currentAuth.Database = strings.Trim(toks[1], "\"'`")
+		}
+	case "SECRET":
+		if len(toks) > 1 {
+			ctx.currentAuth.Secret = strings.Trim(toks[1], "\"'`")
+		}
+	case "USERS":
+		if len(toks) >= 3 {
+			ac := &AuthConfig{
+				Type:     AuthFile,
+				Format:   strings.ToUpper(toks[1]),
+				Filepath: strings.Trim(toks[2], "\"'`"),
+			}
+			ctx.currentAuth.Strategies.Append(ac)
+		}
+	case "USER":
+		if len(toks) >= 3 {
+			ac := &AuthConfig{
+				Type:     AuthUser,
+				User:     toks[1],
+				Password: strings.Trim(toks[2], "\"'`"),
+			}
+			ctx.currentAuth.Strategies.Append(ac)
+		}
+	case "AUTH":
+		// This can be AUTH BEGIN or AUTH filepath or AUTH CSV
+		if len(toks) < 2 {
+			return nil
+		}
+		sub := strings.ToUpper(toks[1])
+		if sub == "CSV" {
+			if len(toks) >= 3 {
+				ctx.currentAuth.Strategies.Append(&AuthConfig{
+					Type:     AuthCSV,
+					Filepath: strings.Trim(toks[2], "\"'`"),
+				})
+			}
+		} else if sub == "BEGIN" {
+			ac := &AuthConfig{Type: AuthScript, Inline: true}
+			if len(toks) > 2 {
+				ac.Configs = parseArgs(strings.Join(toks[2:], " "))
+			}
+			ctx.currentAuth.Strategies.Append(ac)
+			ctx.inlineTarget = inlineTarget{authConfig: ac}
+			ctx.inlineCode.Reset()
+		} else {
+			// AUTH filepath [args]
+			ac := &AuthConfig{Type: AuthScript, Inline: false, Handler: strings.Trim(toks[1], "\"'`")}
+			if len(toks) > 2 {
+				ac.Configs = parseArgs(strings.Join(toks[2:], " "))
+			}
+			ctx.currentAuth.Strategies.Append(ac)
+		}
+	case "STRATEGY", "OAUTH2":
+		if len(toks) >= 3 && strings.ToUpper(toks[2]) == "DEFINE" {
+			ctx.currentOAuth2 = &OAuth2ClientConfig{
+				ID: toks[1],
+			}
+		}
+	case "SERVER":
+		if len(toks) >= 2 && strings.ToUpper(toks[1]) == "DEFINE" {
+			// Handle SERVER DEFINE
+		}
+	}
+	return nil
+}
+
+func (ctx *parseContext) handleInsideOAuth2(toks []string, pl parsedLine) error {
+	cmd := strings.ToUpper(toks[0])
+	switch cmd {
+	case "CLIENTID":
+		if len(toks) > 1 {
+			ctx.currentOAuth2.ID = strings.Trim(toks[1], "\"'`")
+		}
+	case "CLIENTSECRET":
+		if len(toks) > 1 {
+			ctx.currentOAuth2.Secret = strings.Trim(toks[1], "\"'`")
+		}
+	case "REDIRECT", "REDIRECTURL":
+		if len(toks) > 1 {
+			ctx.currentOAuth2.RedirectURIs = append(ctx.currentOAuth2.RedirectURIs, strings.Trim(toks[1], "\"'`"))
+		}
+	case "SCOPE", "SCOPES":
+		if len(toks) > 1 {
+			ctx.currentOAuth2.Scopes = append(ctx.currentOAuth2.Scopes, strings.Trim(toks[1], "\"'`"))
+		}
+	}
+	return nil
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -510,19 +647,19 @@ func (ctx *parseContext) parseAUTH(toks []string) error {
 	case "JSON", "YAML", "TOML", "ENV":
 		if len(toks) >= 3 {
 			ctx.currentProto.Auth.Append(&AuthConfig{
-				Type: AuthFile, Format: sub, Filepath: toks[2], config: ctx.currentProto,
+				Type: AuthFile, Format: sub, Filepath: toks[2], BaseDir: ctx.currentProto.BaseDir,
 			})
 		}
 	case "CSV":
 		if len(toks) >= 3 {
 			ctx.currentProto.Auth.Append(&AuthConfig{
-				Type: AuthCSV, Filepath: toks[2], config: ctx.currentProto,
+				Type: AuthCSV, Filepath: toks[2], BaseDir: ctx.currentProto.BaseDir,
 			})
 		}
 	case "USER":
 		if len(toks) >= 4 {
 			ctx.currentProto.Auth.Append(&AuthConfig{
-				Type: AuthUser, User: toks[2], Password: toks[3], config: ctx.currentProto,
+				Type: AuthUser, User: toks[2], Password: toks[3], BaseDir: ctx.currentProto.BaseDir,
 			})
 		}
 	case "HANDLER":
@@ -532,7 +669,7 @@ func (ctx *parseContext) parseAUTH(toks []string) error {
 				args = parseArgs(strings.Join(toks[3:], " "))
 			}
 			ctx.currentProto.Auth.Append(&AuthConfig{
-				Type: AuthScript, Inline: false, Handler: toks[2], Configs: args, config: ctx.currentProto,
+				Type: AuthScript, Handler: toks[2], Inline: false, Configs: args, BaseDir: ctx.currentProto.BaseDir,
 			})
 		}
 	case "BEGIN":
@@ -540,7 +677,7 @@ func (ctx *parseContext) parseAUTH(toks []string) error {
 		if len(toks) > 2 {
 			args = parseArgs(strings.Join(toks[2:], " "))
 		}
-		ac := &AuthConfig{Type: AuthScript, Inline: true, Configs: args, config: ctx.currentProto}
+		ac := &AuthConfig{Type: AuthScript, Inline: true, Configs: args, BaseDir: ctx.currentProto.BaseDir}
 		ctx.currentProto.Auth.Append(ac)
 		ctx.inlineTarget = inlineTarget{authConfig: ac}
 		ctx.inlineCode.Reset()
@@ -560,12 +697,12 @@ func (ctx *parseContext) parseAUTH(toks []string) error {
 					args = parseArgs(strings.Join(toks[2:], " "))
 				}
 				ctx.currentProto.Auth.Append(&AuthConfig{
-					Type: AuthScript, Inline: false, Handler: handler, Configs: args, config: ctx.currentProto,
+					Type: AuthScript, Inline: false, Handler: handler, Configs: args, BaseDir: ctx.currentProto.BaseDir,
 				})
 				return nil
 			}
 		}
-		ac := &AuthConfig{Type: AuthScript, Inline: true, Configs: args, config: ctx.currentProto}
+		ac := &AuthConfig{Type: AuthScript, Inline: true, Configs: args, BaseDir: ctx.currentProto.BaseDir}
 		ctx.currentProto.Auth.Append(ac)
 		ctx.inlineTarget = inlineTarget{authConfig: ac}
 		ctx.inlineCode.Reset()

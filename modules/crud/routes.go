@@ -1,11 +1,12 @@
 package crud
 
 import (
-	"encoding/json"
-	"fmt"
 	"beba/modules/sse"
 	"beba/plugins/httpserver"
 	"beba/types"
+	"encoding/json"
+	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/gofiber/fiber/v3"
@@ -51,17 +52,6 @@ func mountRoutes(
 
 	// All CRUD routes share the auth middleware
 	g := app.Group(prefix, authMW)
-
-	// ── Root redirect to Admin ────────────────────────────────────────────────
-	app.Get(prefix, func(c fiber.Ctx) error {
-		return c.Redirect().To(prefix + "/_admin")
-	})
-	app.Get(prefix+"/", func(c fiber.Ctx) error {
-		return c.Redirect().To(prefix + "/_admin")
-	})
-
-	// ── Attache Admin ─────────────────────────────────────────────────────────
-	mountAdmin(app, prefix, db, secret, authentication)
 
 	// ── Auth ──────────────────────────────────────────────────────────────────
 	auth := g.Group("/auth")
@@ -331,7 +321,7 @@ func mountRoutes(
 	})
 
 	// ── Schemas ───────────────────────────────────────────────────────────────
-	schemas := g.Group("/schemas")
+	schemas := g.Group("/_schema")
 	schemas.Get("", func(c fiber.Ctx) error {
 		q := db.Model(&CrudSchema{})
 		if r := rc(c); r != nil && !r.IsRoot {
@@ -342,47 +332,50 @@ func mountRoutes(
 		return c.JSON(list)
 	})
 	schemas.Get("/", func(c fiber.Ctx) error {
-		q := db.Model(&CrudSchema{})
-		if r := rc(c); r != nil && !r.IsRoot {
-			q = q.Where("namespace_id = ?", r.Namespace.ID)
-		}
 		var list []CrudSchema
-		q.Find(&list)
+		db.Find(&list)
 		return c.JSON(list)
 	})
-	schemas.Post("/", func(c fiber.Ctx) error {
+
+	schemaUpsert := func(c fiber.Ctx) error {
 		var s CrudSchema
 		c.Bind().JSON(&s)
-		s.ID = newID()
-		if err := db.Create(&s).Error; err != nil {
-			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		if s.Slug == "" {
+			s.Slug = strings.ToLower(s.Name)
 		}
-		broadcastCRUD("create", "", "schemas", s.ID, s)
-		return c.Status(201).JSON(s)
-	})
-	schemas.Put("/:id", func(c fiber.Ctx) error {
-		var s CrudSchema
-		if err := db.First(&s, "id = ? OR slug = ?", c.Params("id"), c.Params("id")).Error; err != nil {
-			return c.Status(404).JSON(fiber.Map{"error": "not found"})
+		// Validate slug regex: /^[a-z][a-z0-9_]*/
+		matched := regexp.MustCompile(`^[a-z][a-z0-9_]*$`).MatchString(s.Slug)
+		if !matched {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid schema name/slug (must match /^[a-z][a-z0-9_]*/)"})
 		}
-		c.Bind().JSON(&s)
-		db.Save(&s)
-		broadcastCRUD("update", "", "schemas", s.ID, s)
+
+		var existing CrudSchema
+		err := db.Where("slug = ?", s.Slug).First(&existing).Error
+		if err == nil {
+			// Update
+			s.ID = existing.ID
+			db.Save(&s)
+			broadcastCRUD("update", "", "schemas", s.ID, s)
+		} else {
+			// Create
+			s.ID = newID()
+			if err := db.Create(&s).Error; err != nil {
+				return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+			}
+			broadcastCRUD("create", "", "schemas", s.ID, s)
+		}
 		return c.JSON(s)
-	})
+	}
+
+	schemas.Post("/", schemaUpsert)
+	schemas.Put("/", schemaUpsert)
+
 	schemas.Delete("/:id", func(c fiber.Ctx) error {
 		db.Delete(&CrudSchema{}, "id = ? OR slug = ?", c.Params("id"), c.Params("id"))
 		broadcastCRUD("delete", "", "schemas", c.Params("id"), nil)
 		return c.JSON(fiber.Map{"ok": true})
 	})
-	schemas.Get("/changes", func(c fiber.Ctx) error {
-		r := rc(c)
-		if r == nil || !r.IsRoot {
-			return c.Status(403).JSON(fiber.Map{"error": "root only"})
-		}
-		c.Locals("channels", "crud::create,crud::update,crud::delete")
-		return sse.Handler(c)
-	})
+
 	schemas.Get("/:id", func(c fiber.Ctx) error {
 		var s CrudSchema
 		if err := db.First(&s, "id = ? OR slug = ?", c.Params("id"), c.Params("id")).Error; err != nil {
@@ -390,48 +383,87 @@ func mountRoutes(
 		}
 		return c.JSON(s)
 	})
-	schemas.Get("/:id/changes", func(c fiber.Ctx) error {
-		r := rc(c)
+
+	// Field management via JSON in Fields column
+	schemas.Get("/:id/_fields", func(c fiber.Ctx) error {
 		var s CrudSchema
 		if err := db.First(&s, "id = ? OR slug = ?", c.Params("id"), c.Params("id")).Error; err != nil {
 			return c.Status(404).JSON(fiber.Map{"error": "not found"})
 		}
-		if r != nil {
-			if err := r.canAccess(s.Slug, "list"); err != nil {
-				return c.Status(403).JSON(fiber.Map{"error": err.Error()})
-			}
-			if err := r.canAccess(s.Slug, "read"); err != nil {
-				return c.Status(403).JSON(fiber.Map{"error": err.Error()})
-			}
-		}
-		var targetNs Namespace
-		db.First(&targetNs, "id = ?", s.NamespaceID)
-		c.Locals("channels", fmt.Sprintf("crud:%s:%s:create,crud:%s:%s:update,crud:%s:%s:delete,crud:%s:%s:restore,crud:%s:%s:reject", targetNs.Slug, s.Slug, targetNs.Slug, s.Slug, targetNs.Slug, s.Slug, targetNs.Slug, s.Slug, targetNs.Slug, s.Slug))
-		return sse.Handler(c)
+		var fields []FieldDef
+		json.Unmarshal([]byte(s.Fields), &fields)
+		return c.JSON(fields)
 	})
-	schemas.Post("/", func(c fiber.Ctx) error {
-		var s CrudSchema
-		c.Bind().JSON(&s)
-		s.ID = newID()
-		if err := db.Create(&s).Error; err != nil {
-			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
-		}
-		broadcastCRUD("create", "", "schemas", s.ID, s)
-		return c.Status(201).JSON(s)
-	})
-	schemas.Put("/:id", func(c fiber.Ctx) error {
+
+	schemas.Get("/:id/:field", func(c fiber.Ctx) error {
 		var s CrudSchema
 		if err := db.First(&s, "id = ? OR slug = ?", c.Params("id"), c.Params("id")).Error; err != nil {
 			return c.Status(404).JSON(fiber.Map{"error": "not found"})
 		}
-		c.Bind().JSON(&s)
-		db.Save(&s)
-		broadcastCRUD("update", "", "schemas", s.ID, s)
-		return c.JSON(s)
+		var fields []FieldDef
+		json.Unmarshal([]byte(s.Fields), &fields)
+		for _, f := range fields {
+			if f.Name == c.Params("field") {
+				return c.JSON(f)
+			}
+		}
+		return c.Status(404).JSON(fiber.Map{"error": "field not found"})
 	})
-	schemas.Delete("/:id", func(c fiber.Ctx) error {
-		db.Delete(&CrudSchema{}, "id = ? OR slug = ?", c.Params("id"), c.Params("id"))
-		broadcastCRUD("delete", "", "schemas", c.Params("id"), nil)
+
+	fieldUpsert := func(c fiber.Ctx) error {
+		var s CrudSchema
+		if err := db.First(&s, "id = ? OR slug = ?", c.Params("id"), c.Params("id")).Error; err != nil {
+			return c.Status(404).JSON(fiber.Map{"error": "not found"})
+		}
+		fieldName := c.Params("field")
+		if !regexp.MustCompile(`^[a-z][a-z0-9_]*$`).MatchString(fieldName) {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid field name"})
+		}
+
+		var fields []FieldDef
+		json.Unmarshal([]byte(s.Fields), &fields)
+
+		var newField FieldDef
+		c.Bind().JSON(&newField)
+		newField.Name = fieldName
+
+		found := false
+		for i, f := range fields {
+			if f.Name == fieldName {
+				fields[i] = newField
+				found = true
+				break
+			}
+		}
+		if !found {
+			fields = append(fields, newField)
+		}
+
+		fieldsJSON, _ := json.Marshal(fields)
+		db.Model(&s).Update("fields", string(fieldsJSON))
+		return c.JSON(newField)
+	}
+
+	schemas.Post("/:id/:field", fieldUpsert)
+	schemas.Put("/:id/:field", fieldUpsert)
+	schemas.Patch("/:id/:field", fieldUpsert)
+
+	schemas.Delete("/:id/:field", func(c fiber.Ctx) error {
+		var s CrudSchema
+		if err := db.First(&s, "id = ? OR slug = ?", c.Params("id"), c.Params("id")).Error; err != nil {
+			return c.Status(404).JSON(fiber.Map{"error": "not found"})
+		}
+		var fields []FieldDef
+		json.Unmarshal([]byte(s.Fields), &fields)
+
+		newFields := fields[:0]
+		for _, f := range fields {
+			if f.Name != c.Params("field") {
+				newFields = append(newFields, f)
+			}
+		}
+		fieldsJSON, _ := json.Marshal(newFields)
+		db.Model(&s).Update("fields", string(fieldsJSON))
 		return c.JSON(fiber.Map{"ok": true})
 	})
 	// POST /schemas/:id/move → { "namespace": "slug-or-id" }
@@ -481,17 +513,44 @@ func mountRoutes(
 				return c.Status(403).JSON(fiber.Map{"error": err.Error()})
 			}
 		}
+
+		first := c.Query("first") == "true"
+		last := c.Query("last") == "true"
+		// Default: first=true if none specified
+		if !first && !last {
+			first = true
+		}
+
 		col, err := newCollection(db, s, r, baseDir)
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 		}
+
+		limit := int(toInt(c.Query("limit"), 50))
+		offset := int(toInt(c.Query("offset"), 0))
+		sort := c.Query("sort")
+
+		// Handle first/last logic
+		if first || last {
+			limit = 1
+			if last {
+				sort = "-created_at"
+			} else {
+				sort = "created_at"
+			}
+		}
+
 		docs, err := col.List(ListOptions{
-			Limit:  int(toInt(c.Query("limit"), 50)),
-			Offset: int(toInt(c.Query("offset"), 0)),
-			Sort:   c.Query("sort"),
+			Limit:  limit,
+			Offset: offset,
+			Sort:   sort,
 		})
 		if err != nil {
 			return apiError(c, err)
+		}
+
+		if (first || last) && len(docs) > 0 {
+			return c.JSON(docs[0])
 		}
 		return c.JSON(docs)
 	})
@@ -594,8 +653,8 @@ func mountRoutes(
 		return sse.Handler(c)
 	})
 
-	// POST   /:schema                — create
-	docs.Post("/", func(c fiber.Ctx) error {
+	// POST/PUT   /:schema                — create
+	createDoc := func(c fiber.Ctx) error {
 		r := rc(c)
 		s, err := resolveSchema(c, r)
 		if err != nil {
@@ -617,7 +676,9 @@ func mountRoutes(
 			return apiError(c, err)
 		}
 		return c.Status(201).JSON(doc)
-	})
+	}
+	docs.Post("/", createDoc)
+	docs.Put("/", createDoc)
 
 	// POST   /:schema/query          — find with complex filter
 	docs.Post("/query", func(c fiber.Ctx) error {
@@ -658,8 +719,8 @@ func mountRoutes(
 		return c.JSON(list)
 	})
 
-	// PUT    /:schema/:id            — update
-	docs.Put("/:id", func(c fiber.Ctx) error {
+	// PATCH/POST/PUT    /:schema/:id            — update
+	updateDoc := func(c fiber.Ctx) error {
 		r := rc(c)
 		s, err := resolveSchema(c, r)
 		if err != nil {
@@ -681,7 +742,10 @@ func mountRoutes(
 			return apiError(c, err)
 		}
 		return c.JSON(doc)
-	})
+	}
+	docs.Patch("/:id", updateDoc)
+	docs.Post("/:id", updateDoc)
+	docs.Put("/:id", updateDoc)
 
 	// DELETE /:schema/:id            — soft delete
 	docs.Delete("/:id", func(c fiber.Ctx) error {

@@ -26,6 +26,7 @@ import (
 	_ "beba/modules/storage"
 
 	"beba/modules/security"
+	"beba/modules/auth"
 )
 
 // Directive interface for matching and handling connections
@@ -141,6 +142,10 @@ func (m *Manager) Restart() error {
 	return syscall.Exec(exe, os.Args, os.Environ())
 }
 func (m *Manager) Start(config *Config) error {
+	if err := auth.Initialize(config.AuthManagers); err != nil {
+		return fmt.Errorf("auth initialization failed: %w", err)
+	}
+
 	for _, group := range config.Groups {
 		// config.Protocols → config.Registrations (filtered to kind "PROTOCOL")
 		if err := m.startGroup(group, config.Registrations); err != nil {

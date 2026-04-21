@@ -12,6 +12,7 @@ import (
 	"beba/modules/crud"
 	_ "beba/modules/pdf"
 	"beba/modules/sse"
+	"beba/modules/auth"
 	"beba/plugins/httpserver"
 	"beba/plugins/js"
 	"beba/processor"
@@ -90,6 +91,7 @@ func NewHTTPDirective(config *DirectiveConfig) *HTTPDirective {
 	domainRoutes := config.GetRoutes("DOMAIN")
 	aliasRoutes := config.GetRoutes("ALIASES")
 	securityRoutes := config.GetRoutes("SECURITY")
+	_ = config.GetRoutes("DISABLE")
 
 	var defaultWAF *httpserver.WAFConfig
 	if len(securityRoutes) > 0 {
@@ -106,6 +108,14 @@ func NewHTTPDirective(config *DirectiveConfig) *HTTPDirective {
 	var aliases []string
 	for _, a := range aliasRoutes {
 		aliases = append(aliases, a.Path)
+	}
+
+	portRoutes := config.GetRoutes("PORT")
+	if len(portRoutes) > 0 {
+		port := portRoutes[0].Path
+		if !strings.Contains(config.Address, ":") {
+			config.Address = net.JoinHostPort(config.Address, port)
+		}
 	}
 
 	// ── SSL ───────────────────────────────────────────────────────────────────
@@ -180,9 +190,54 @@ func NewHTTPDirective(config *DirectiveConfig) *HTTPDirective {
 		registerProxy(app, p)
 	}
 
-	// ── Rewrites & Redirects ──────────────────────────────────────────────────
 	if len(rewrites) > 0 || len(redirects) > 0 {
 		registerRewritesRedirects(app, rewrites, redirects, config)
+	}
+
+	// ── Default Features ─────────────────────────────────────────────────────
+	// Initialize default CRUD (/api) and Realtime (/api/realtime) if not disabled
+
+	// Default CRUD
+	if config.Enabled("DEFAULT", "CRUD", "API", "DATABASE") {
+		enableAdmin := config.Enabled("ADMIN_UI", "ADMIN")
+		if err := crud.InitializeDefaultCRUD(app, enableAdmin); err != nil {
+			log.Printf("HTTP: failed to initialize default CRUD: %v", err)
+		}
+	}
+
+	// Default Realtime
+	if config.Enabled("DEFAULT", "REALTIME", "API") {
+		// Ensure SSE Hub is initialized
+		hub := sse.GetHub()
+
+		// Helper to check if a route is already registered
+		isRouteRegistered := func(method, path string) bool {
+			for _, r := range config.Routes {
+				if strings.ToUpper(r.Method) == method && r.Path == path {
+					return true
+				}
+			}
+			return false
+		}
+
+		// SSE endpoint: /api/realtime/sse
+		if !isRouteRegistered("GET", "/api/realtime/sse") {
+			app.Get("/api/realtime/sse", func(c fiber.Ctx) error {
+				return sse.Handler(c)
+			})
+		}
+
+		// Realtime API endpoints: /api/realtime/*
+		if !isRouteRegistered("POST", "/api/realtime/publish") {
+			app.Post("/api/realtime/publish", func(c fiber.Ctx) error {
+				var msg sse.Message
+				if err := c.Bind().JSON(&msg); err != nil {
+					return c.Status(400).JSON(fiber.Map{"error": "invalid message"})
+				}
+				hub.Publish(&msg)
+				return c.JSON(fiber.Map{"ok": true})
+			})
+		}
 	}
 
 	// ── Middlewares (global, sorted by priority arg) ──────────────────────────
@@ -200,7 +255,20 @@ func NewHTTPDirective(config *DirectiveConfig) *HTTPDirective {
 			r := *rP
 			// Skip HTTP-infrastructure routes already handled above
 			switch r.Method {
-			case "ERROR", "WORKER", "PROXY", "REWRITE", "REDIRECT", "MIDDLEWARE", "SSL", "CRUD", "SECURITY":
+			case "ERROR", "WORKER", "PROXY", "REWRITE", "REDIRECT", "MIDDLEWARE", "SSL", "CRUD", "SECURITY", "PORT", "DOMAIN", "ALIAS", "ALIASES", "DATABASE", "STORAGE", "DISABLE", "AUTH":
+				if r.Method == "AUTH" {
+					authName := r.Path
+					mountPath := r.Handler
+					if mountPath == "" {
+						mountPath = "/auth"
+					}
+					m := auth.GetManager(authName)
+					if m != nil {
+						auth.RegisterRoutes(router.Group(mountPath), m)
+					} else {
+						log.Printf("HTTP: auth manager %s not found", authName)
+					}
+				}
 				continue
 			}
 			if r.IsGroup && r.Method != "GROUP" {
@@ -915,26 +983,6 @@ func NewHTTPDirective(config *DirectiveConfig) *HTTPDirective {
 	// ── Metrics ──────────────────────────────────────────────────────────────
 	// Expose /metrics for Prometheus
 	app.App.Get("/metrics", adaptor.HTTPHandler(promhttp.Handler()))
-
-	// ── CRUD mounts ──────────────────────────────────────────────────────────
-	// CRUD [name] [/mount/path]
-	// Attaches a named CrudInstance to this HTTP server at the given prefix.
-	var crudRoutes []*RouteConfig = config.GetRoutes("CRUD")
-	for _, r := range crudRoutes {
-		crudName := r.Path                        // first token  = instance name
-		crudMount := strings.TrimSpace(r.Handler) // second token = mount path
-		if crudMount == "" {
-			crudMount = "/" + crudName
-		}
-		inst := crud.GetCrudInstance(crudName)
-		if inst == nil {
-			log.Printf("HTTP: CRUD %q not found, skipping mount on %s", crudName, crudMount)
-			continue
-		}
-		if err := crud.MountOn(app, inst, crudMount); err != nil {
-			log.Printf("HTTP: CRUD %q mount error: %v", crudName, err)
-		}
-	}
 
 	// ── PAYMENT mounts ──────────────────────────────────────────────────────
 	// PAYMENT [name] [/mount/path]

@@ -97,6 +97,13 @@ type Hub struct {
 
 var HubInstance *Hub
 
+func GetHub() *Hub {
+	if HubInstance == nil {
+		HubInstance = NewHub()
+	}
+	return HubInstance
+}
+
 func (h *Hub) Reset() {
 	h.muHooks.Lock()
 	h.publishHooks = nil

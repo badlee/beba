@@ -36,7 +36,7 @@ func readEmbeddedTemplate(name string) (string, error) {
 }
 
 // renderAdmin renders a page template inside the layout using processor.ProcessString.
-func renderAdmin(c fiber.Ctx, pageTemplate string, prefix string, activePath string, settings map[string]string) error {
+func renderAdmin(c fiber.Ctx, pageTemplate string, prefix string, apiPrefix string, activePath string, settings map[string]string) error {
 	db := c.Locals("db").(*gorm.DB)
 
 	// Read active namespace from cookie
@@ -86,7 +86,6 @@ func renderAdmin(c fiber.Ctx, pageTemplate string, prefix string, activePath str
 	namespacesJSON, _ := json.Marshal(nsList)
 
 	// Determine the SSE prefix
-	apiPrefix := strings.TrimSuffix(prefix, "/_admin")
 	ssePrefix := apiPrefix + "/namespaces/changes"
 
 	// Build layout settings
@@ -114,9 +113,8 @@ func renderAdmin(c fiber.Ctx, pageTemplate string, prefix string, activePath str
 // mountAdmin registers all admin routes under {prefix}/_admin
 // ─────────────────────────────────────────────────────────────────────────────
 
-func mountAdmin(app *httpserver.HTTP, prefix string, db *gorm.DB, secret string, authentication ...types.Authentification) {
+func mountAdmin(app *httpserver.HTTP, prefix string, apiPrefix string, db *gorm.DB, secret string, authentication ...types.Authentification) {
 	adminPrefix := prefix + "/_admin"
-	apiPrefix := prefix
 
 	// Admin requires a valid root token
 	adminAuth := func(c fiber.Ctx) error {
@@ -246,7 +244,7 @@ func mountAdmin(app *httpserver.HTTP, prefix string, db *gorm.DB, secret string,
 		schemasJSON, _ := json.Marshal(infos)
 
 		tpl, _ := readEmbeddedTemplate("dashboard.html")
-		return renderAdmin(c, tpl, adminPrefix, "/", map[string]string{
+		return renderAdmin(c, tpl, adminPrefix, apiPrefix, "/", map[string]string{
 			"pageTitle":      "Dashboard",
 			"schemaCount":    fmt.Sprintf("%d", schemaCount),
 			"namespaceCount": fmt.Sprintf("%d", nsCount),
@@ -265,7 +263,7 @@ func mountAdmin(app *httpserver.HTTP, prefix string, db *gorm.DB, secret string,
 		schemasJSON, _ := json.Marshal(schemas)
 
 		tpl, _ := readEmbeddedTemplate("schemas.html")
-		return renderAdmin(c, tpl, adminPrefix, "/collections", map[string]string{
+		return renderAdmin(c, tpl, adminPrefix, apiPrefix, "/collections", map[string]string{
 			"pageTitle":   "Collections",
 			"schemas":     string(schemasJSON),
 			"adminPrefix": adminPrefix,
@@ -287,7 +285,7 @@ func mountAdmin(app *httpserver.HTTP, prefix string, db *gorm.DB, secret string,
 		}
 
 		tpl, _ := readEmbeddedTemplate("collection.html")
-		return renderAdmin(c, tpl, adminPrefix, "/collections", map[string]string{
+		return renderAdmin(c, tpl, adminPrefix, apiPrefix, "/collections", map[string]string{
 			"pageTitle":    schema.Name,
 			"schemaName":   schema.Name,
 			"schemaSlug":   schema.Slug,
@@ -332,7 +330,7 @@ func mountAdmin(app *httpserver.HTTP, prefix string, db *gorm.DB, secret string,
 		prettyMeta := prettyJSON(doc.Meta)
 
 		tpl, _ := readEmbeddedTemplate("document.html")
-		return renderAdmin(c, tpl, adminPrefix, "/collections", map[string]string{
+		return renderAdmin(c, tpl, adminPrefix, apiPrefix, "/collections", map[string]string{
 			"pageTitle":   "Document " + docID[:8],
 			"docId":       docID,
 			"schemaSlug":  slug,
@@ -351,7 +349,7 @@ func mountAdmin(app *httpserver.HTTP, prefix string, db *gorm.DB, secret string,
 		db.Find(&nsList)
 		nsJSON, _ := json.Marshal(nsList)
 		tpl, _ := readEmbeddedTemplate("namespaces.html")
-		return renderAdmin(c, tpl, adminPrefix, "/namespaces", map[string]string{
+		return renderAdmin(c, tpl, adminPrefix, apiPrefix, "/namespaces", map[string]string{
 			"pageTitle":   "Namespaces",
 			"namespaces":  string(nsJSON),
 			"adminPrefix": adminPrefix,
@@ -365,7 +363,7 @@ func mountAdmin(app *httpserver.HTTP, prefix string, db *gorm.DB, secret string,
 		db.Find(&userList)
 		usersJSON, _ := json.Marshal(userList)
 		tpl, _ := readEmbeddedTemplate("users.html")
-		return renderAdmin(c, tpl, adminPrefix, "/users", map[string]string{
+		return renderAdmin(c, tpl, adminPrefix, apiPrefix, "/users", map[string]string{
 			"pageTitle":   "Users",
 			"users":       string(usersJSON),
 			"adminPrefix": adminPrefix,
@@ -379,7 +377,7 @@ func mountAdmin(app *httpserver.HTTP, prefix string, db *gorm.DB, secret string,
 		db.Find(&roleList)
 		rolesJSON, _ := json.Marshal(roleList)
 		tpl, _ := readEmbeddedTemplate("roles.html")
-		return renderAdmin(c, tpl, adminPrefix, "/roles", map[string]string{
+		return renderAdmin(c, tpl, adminPrefix, apiPrefix, "/roles", map[string]string{
 			"pageTitle":   "Roles",
 			"roles":       string(rolesJSON),
 			"adminPrefix": adminPrefix,
@@ -395,7 +393,7 @@ func mountAdmin(app *httpserver.HTTP, prefix string, db *gorm.DB, secret string,
 			if tpl == "" {
 				return c.SendString("No template defined for " + p.Path)
 			}
-			return renderAdmin(c, tpl, adminPrefix, p.Path, map[string]string{
+			return renderAdmin(c, tpl, adminPrefix, apiPrefix, p.Path, map[string]string{
 				"pageTitle":   p.Title,
 				"adminPrefix": adminPrefix,
 				"apiPrefix":   apiPrefix,

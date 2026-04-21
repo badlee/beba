@@ -23,6 +23,35 @@ HTTPS 0.0.0.0:443
 END HTTPS
 ```
 
+### `AUTH [manager_name] [path]`
+Mounts a globally defined authentication manager onto a specific path prefix for this HTTP protocol block. If no path is provided, it defaults to `/auth`.
+```hcl
+HTTP 0.0.0.0:80
+    // Assumes 'central' was defined globally via AUTH central DEFINE
+    AUTH central /api/auth
+END HTTP
+```
+
+### 🛑 Feature Deactivation
+You can selectively disable default features using the `DISABLE` directive.
+
+| Type | Feature | Description |
+|---|---|---|
+| `DEFAULT` | `API` | Disables **all** default endpoints (CRUD + Realtime). |
+| `DEFAULT` | `CRUD` | Disables only the auto-generated database REST API (`/api/*`). |
+| `DEFAULT` | `DATABASE` | Alias for `CRUD`. Disables the database REST API. |
+| `DEFAULT` | `REALTIME` | Disables only the Realtime/SSE/WS endpoints (`/api/realtime/*`). |
+| `ADMIN`   | `UI`       | Disables the administration dashboard on `/_admin`. |
+
+```hcl
+HTTP 0.0.0.0:8080
+    DISABLE DEFAULT API      // Complete lockdown of default endpoints
+    
+    // OR be more specific:
+    DISABLE DEFAULT CRUD     // Keep Realtime, but disable CRUD
+END HTTP
+```
+
 ---
 
 ## 🔒 SSL / TLS Configuration

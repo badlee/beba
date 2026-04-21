@@ -8,6 +8,8 @@ Ce document définit les règles de codage et les standards à suivre pour le pr
 2. **Variadic Registration**: Route registration in `http_protocol.go` MUST follow the `app.Add(methods, path, handlers[0], handlers[1:]...)` pattern.
 3. **Optimized Stack**: Priority must be given to modern and high-performance middleware implementations.
 4. **Binary Content**: Always use `[]byte` for content (via `RouteConfig.Content()`) to ensure binary safety (images, downloads, etc.). Avoid using `string` for raw payload.
+5. **Feature Toggling**: Use `DirectiveConfig.Enabled()` or `Disabled()` for any conditional feature registration. Prefer `AnyEnabled()` or `AnyDisabled()` for loose checks when multiple aliases exist.
+6. **CRUD API Standardization**: Default CRUD APIs MUST be mounted on `/api` and comply with the `/api/_schema` and `/api/:schema?first=true|last=true` patterns. The Admin UI MUST be mounted on `/_admin` and respect the `DISABLE ADMIN UI` directive.
 
 ### Real-time Communication (Hub SSE)
 
@@ -52,9 +54,11 @@ Ce document définit les règles de codage et les standards à suivre pour le pr
 
 ### Authentication & Authorization
 
-1. **Context-Aware**: Any `Auth` implementation MUST take `fiber.Ctx` as its first argument to support session-based or token-based logic.
-2. **Hashing**: New passwords stored in configurations SHOULD use `{SHA512}` or `{BCRYPT}`.
-3. **Escaping**: Binder variables and arguments MUST support multiple quote types (``,"",'') with backslash escaping.
+1. **Context-Aware**: Any `Strategy` implementation in `modules/auth` MUST take `context.Context` (or `fiber.Ctx` where applicable) to support session-based or token-based logic.
+2. **Centralization**: Always define authentication using the global `AUTH [name] DEFINE` block. Avoid inline `AUTH` directives inside protocols unless necessary for strict backward compatibility.
+3. **Hashing**: New passwords stored in local configurations (USER, CSV, File) MUST be validated using the built-in `CheckPassword` helper, which natively supports `{SHA512}`, `{BCRYPT}`, etc.
+4. **OAuth2 Integration**: External identities must be configured within the global AUTH block using `STRATEGY [name] DEFINE` and handled through the unified `/auth/callback/:strategy` route.
+5. **Escaping**: Binder variables and arguments MUST support multiple quote types (``,"",'') with backslash escaping.
 
 ### Security Constants
 
@@ -86,7 +90,8 @@ Ce document définit les règles de codage et les standards à suivre pour le pr
   - `WORKER [js_file] [KEY=VALUE...]` : Lance un script JS en arrière-plan dans une tâche isolée. `config` contient les args du worker, `settings` contient les `SET`. Répétable.
   - `SSL [key] [cert]` / `SSL AUTO [domain] [email]` : Configuration TLS/HTTPS.
   - `SSE [path]` : Server-Sent Events. `const sse = require("sse")` est **auto-injecté** dans les handlers inline.
-  - `AUTH [format] [path]` / `AUTH USER [user] [pwd]` / `AUTH { scripts }` : Système d'authentification robuste. Supporte JSON, YAML, TOML, ENV, CSV et scripts JS (`allow()`, `reject(msg...)`, variables `username`, `password`, `config`). Supporte **Bcrypt**.
+  - `AUTH [name] DEFINE` : Registre global d'authentification. Définit la base de données, le secret, les clients OAuth2 (`STRATEGY`), le serveur OAuth2 (`SERVER`), et les sources locales (`USER`, `USERS`, `AUTH CSV`, `AUTH BEGIN`).
+  - `AUTH [name] [path]` : (Dans HTTP) Monte les APIs du gestionnaire spécifié (ex: `/auth/login`, `/auth/callback/:strategy`).
   - `DTP` : Directives spécifiques : `DATA [name]`, `EVENT [name]`, `PING`, `PONG`, `CMD`, `ACK`, `NACK`, `ERR`, `QUEUE`, `ONLINE`. Routage par subtype supportant les noms (ex: `TEMP`) ou les codes hex (ex: `0x01`). Intégration avec `AUTH` via `OnGetDevice` (helper `allow(secret, proto)`).
   - `MQTT` : **Broker MQTT 3.1.1/5.0** : Broker natif ultra-performant unifié avec le Hub SSE. Support de la persistence QoS 1/2 via GORM (`STORAGE`) et sécurisation native au niveau socket (`SECURITY`) par sniffing non-destructif.
   - **MQTT Testing** : Toujours utiliser `t.TempDir()` pour les bases `STORAGE` et des ports dynamiques (`:0`) pour éviter les conflits d'environnement.

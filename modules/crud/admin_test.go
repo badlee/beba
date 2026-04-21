@@ -44,7 +44,7 @@ func TestAdminRoutes_Integration(t *testing.T) {
 	})
 
 	// Mount admin routes
-	mountAdmin(app, "/api", db, secret)
+	mountAdmin(app, "/api", "/api", db, secret)
 
 	// 1. Unauthenticated request to dashboard -> Redirect to login
 	reqNoAuth := httptest.NewRequest("GET", "/api/_admin/", nil)

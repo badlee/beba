@@ -1,38 +1,25 @@
 package binder
 
 import (
-	"bytes"
-	"crypto/md5"
-	"crypto/sha1"
-	"crypto/sha256"
-	"crypto/sha512"
+	"beba/plugins/config"
 	"encoding/base32"
 	"encoding/base64"
-	"encoding/csv"
 	"encoding/hex"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"beba/plugins/config"
-	"beba/processor"
-	"beba/types"
-	"io"
 	"mime"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 	"unicode"
 
-	"github.com/dop251/goja"
-	"github.com/joho/godotenv"
-	"github.com/pelletier/go-toml/v2"
-	"golang.org/x/crypto/bcrypt"
+	"beba/modules/auth"
+
 	"golang.org/x/text/unicode/norm"
-	"gopkg.in/yaml.v3"
 )
 
 // Arguments is a flat key→value map used for parsed arguments, Env, and Configs.
@@ -129,6 +116,7 @@ func (r Arguments) HasDuration(key string) bool {
 type Config struct {
 	Registrations []ProtocolRegistration
 	Groups        []GroupConfig
+	AuthManagers  map[string]*AuthManagerConfig
 }
 
 // ProtocolRegistration stores a REGISTER PROTOCOL|MIDDLEWARE|MODULE|PRELOAD declaration.
@@ -157,18 +145,20 @@ type GroupConfig struct {
 // middleware chains …) appear as RouteConfig entries in Routes and are
 // interpreted by each protocol implementation.
 type DirectiveConfig struct {
-	Name      string            // Directive identifier ("HTTP", "DTP", …)
-	Address   string            // Inherited from the parent GroupConfig
-	Args      Arguments         // Arguments on the opening line
-	Env       Arguments         // ENV values (keys __file_N hold file paths; __prefix holds prefix)
-	Configs   Arguments         // CONF + SET/DEF/DEL values
-	Routes    Routes            // All custom directives declared inside this block
-	AppConfig *config.AppConfig // Injected at runtime by the caller
-	BaseDir   string            // Absolute dir of the source .bind file
-	Auth      AuthConfigs       // AUTH directives
+	Name          string            // Directive identifier ("HTTP", "DTP", …)
+	Address       string            // Inherited from the parent GroupConfig
+	Args          Arguments         // Arguments on the opening line
+	Env           Arguments         // ENV values (keys __file_N hold file paths; __prefix holds prefix)
+	Configs       Arguments         // CONF + SET/DEF/DEL values
+	Routes        Routes            // All custom directives declared inside this block
+	AppConfig     *config.AppConfig // Injected at runtime by the caller
+	BaseDir       string            // Absolute dir of the source .bind file
+	Auth          AuthConfigs       // AUTH directives
+	disabledCache map[string]bool
+	mu            sync.RWMutex
 }
 
-func (r DirectiveConfig) GetRoutes(route string) Routes {
+func (r *DirectiveConfig) GetRoutes(route string) Routes {
 	var out Routes
 	for _, rc := range r.Routes {
 		if rc.Method == route {
@@ -176,6 +166,70 @@ func (r DirectiveConfig) GetRoutes(route string) Routes {
 		}
 	}
 	return out
+}
+
+func (r *DirectiveConfig) Disabled(typ, feature string, extra ...string) bool {
+	r.initDisabledCache()
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	typ = strings.ToUpper(typ)
+	if !r.disabledCache[typ+":"+strings.ToUpper(feature)] {
+		return false
+	}
+	for _, ef := range extra {
+		if !r.disabledCache[typ+":"+strings.ToUpper(ef)] {
+			return false
+		}
+	}
+	return true
+}
+
+func (r *DirectiveConfig) AnyDisabled(typ, feature string, extra ...string) bool {
+	r.initDisabledCache()
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	typ = strings.ToUpper(typ)
+	if r.disabledCache[typ+":"+strings.ToUpper(feature)] {
+		return true
+	}
+	for _, ef := range extra {
+		if r.disabledCache[typ+":"+strings.ToUpper(ef)] {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *DirectiveConfig) Enabled(typ, feature string, extra ...string) bool {
+	return !r.AnyDisabled(typ, feature, extra...)
+}
+
+func (r *DirectiveConfig) AnyEnabled(typ, feature string, extra ...string) bool {
+	return !r.Disabled(typ, feature, extra...)
+}
+
+func (r *DirectiveConfig) initDisabledCache() {
+	r.mu.RLock()
+	if r.disabledCache != nil {
+		r.mu.RUnlock()
+		return
+	}
+	r.mu.RUnlock()
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.disabledCache == nil {
+		r.disabledCache = make(map[string]bool)
+		routes := r.GetRoutes("DISABLE")
+		for _, rc := range routes {
+			t := strings.ToUpper(strings.TrimSpace(rc.Path))
+			f := strings.ToUpper(strings.TrimSpace(rc.Handler))
+			r.disabledCache[t+":"+f] = true
+		}
+	}
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -306,295 +360,23 @@ func (r Routes) GetGroups() Routes {
 // Auth
 // ─────────────────────────────────────────────────────────────────────────────
 
-type AuthType string
+type AuthResult = auth.AuthResult
+type AuthConfig = auth.AuthConfig
+type AuthConfigs = auth.AuthConfigs
+type AuthManagerConfig = auth.AuthManagerConfig
+type OAuth2ClientConfig = auth.OAuth2ClientConfig
+
+type AuthType = auth.AuthType
 
 const (
-	AuthFile   AuthType = "FILE"
-	AuthCSV    AuthType = "CSV"
-	AuthUser   AuthType = "USER"
-	AuthScript AuthType = "SCRIPT"
+	AuthFile   = auth.AuthFile
+	AuthCSV    = auth.AuthCSV
+	AuthUser   = auth.AuthUser
+	AuthScript = auth.AuthScript
 )
-
-type AuthResult struct {
-	Username string
-	Secret   string
-	UseProto bool
-}
-
-func (a *AuthResult) User() string {
-	return a.Username
-}
-
-func (a *AuthResult) Pwd() string {
-	return a.Secret
-}
-func (a *AuthResult) Proto() bool {
-	return a.UseProto
-}
-
-type AuthConfig struct {
-	Type     AuthType
-	Format   string    // JSON, YAML, TOML, ENV (when Type==AuthFile)
-	Filepath string    // for FILE and CSV
-	User     string    // for AuthUser
-	Password string    // for AuthUser
-	Handler  string    // JS code or filepath (for AuthScript)
-	Inline   bool      // true when handler is inline JS
-	Configs  Arguments // passed to script as `config`
-	config   *DirectiveConfig
-}
-
-type AuthConfigs []*AuthConfig
-
-func (a *AuthConfigs) Append(c *AuthConfig) { *a = append(*a, c) }
-
-func (a AuthConfigs) Auth(username, password string, token ...string) error {
-	for _, ac := range a {
-		if err := ac.Auth(username, password, token...); err == nil {
-			return nil
-		}
-	}
-	return errors.New("unauthorized")
-}
-
-func (a AuthConfigs) UserInfo(username string) (types.UserInfo, error) {
-	for _, ac := range a {
-		if r, err := ac.UserInfo(username); err == nil {
-			return r, nil
-		}
-	}
-	return nil, errors.New("user not found")
-}
-
-func (auth *AuthConfig) CheckPwd(hashed, plain string) bool {
-	if hashed == "" {
-		return plain == ""
-	}
-	if strings.HasPrefix(hashed, "$2") {
-		return bcrypt.CompareHashAndPassword([]byte(hashed), []byte(plain)) == nil
-	}
-	if strings.HasPrefix(hashed, "{") {
-		end := strings.IndexByte(hashed, '}')
-		if end > 1 {
-			alg, val := strings.ToUpper(hashed[1:end]), hashed[end+1:]
-			var candidates [][]byte
-			if b, err := hex.DecodeString(val); err == nil {
-				candidates = append(candidates, b)
-			}
-			if b, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(strings.ToUpper(val)); err == nil {
-				candidates = append(candidates, b)
-			}
-			if b, err := base64.StdEncoding.DecodeString(val); err == nil {
-				candidates = append(candidates, b)
-			}
-			if len(candidates) == 0 {
-				candidates = append(candidates, []byte(val))
-			}
-			var dig []byte
-			switch alg {
-			case "SHA512":
-				h := sha512.Sum512([]byte(plain))
-				dig = h[:]
-			case "SHA256":
-				h := sha256.Sum256([]byte(plain))
-				dig = h[:]
-			case "SHA1":
-				h := sha1.Sum([]byte(plain))
-				dig = h[:]
-			case "MD5":
-				h := md5.Sum([]byte(plain))
-				dig = h[:]
-			default:
-				return false
-			}
-			for _, c := range candidates {
-				if bytes.Equal(c, dig) {
-					return true
-				}
-			}
-			return false
-		}
-	}
-	return hashed == plain
-}
-
-func (auth *AuthConfig) Auth(username, password string, token ...string) error {
-	switch auth.Type {
-	case AuthUser:
-		if auth.User == username && auth.CheckPwd(auth.Password, password) {
-			return nil
-		}
-	case AuthCSV:
-		if f, err := auth.openFile(); err == nil {
-			defer f.Close()
-			r := csv.NewReader(f)
-			r.Comma = ';'
-			for {
-				rec, err := r.Read()
-				if err == io.EOF {
-					break
-				}
-				if err == nil && len(rec) >= 2 &&
-					strings.TrimSpace(rec[0]) == username &&
-					auth.CheckPwd(strings.TrimSpace(rec[1]), password) {
-					return nil
-				}
-			}
-		}
-	case AuthFile:
-		if users := auth.loadUserFile(); users != nil {
-			if pwd, ok := users[username]; ok && auth.CheckPwd(pwd, password) {
-				return nil
-			}
-		}
-	case AuthScript:
-		return auth.runScript(username, password, nil)
-	}
-	return errors.New("unauthorized")
-}
-
-func (auth *AuthConfig) UserInfo(username string) (*AuthResult, error) {
-	switch auth.Type {
-	case AuthUser:
-		if auth.User == username {
-			return &AuthResult{Username: username, Secret: auth.Password, UseProto: useProto(auth)}, nil
-		}
-	case AuthCSV:
-		if f, err := auth.openFile(); err == nil {
-			defer f.Close()
-			r := csv.NewReader(f)
-			r.Comma = ';'
-			for {
-				rec, err := r.Read()
-				if err == io.EOF {
-					break
-				}
-				if err == nil && len(rec) >= 2 && strings.TrimSpace(rec[0]) == username {
-					return &AuthResult{Username: username, Secret: strings.TrimSpace(rec[1]), UseProto: useProto(auth)}, nil
-				}
-			}
-		}
-	case AuthFile:
-		if users := auth.loadUserFile(); users != nil {
-			if secret, ok := users[username]; ok {
-				return &AuthResult{Username: username, Secret: secret, UseProto: useProto(auth)}, nil
-			}
-		}
-	case AuthScript:
-		var result *AuthResult
-		err := auth.runScript(username, "", &result)
-		return result, err
-	}
-	return nil, errors.New("user not found")
-}
-
-func (auth *AuthConfig) openFile() (*os.File, error) {
-	p := auth.Filepath
-	if auth.config != nil && !filepath.IsAbs(p) {
-		p = filepath.Join(auth.config.BaseDir, p)
-	}
-	return os.Open(p)
-}
-
-func (auth *AuthConfig) loadUserFile() map[string]string {
-	f, err := auth.openFile()
-	if err != nil {
-		return nil
-	}
-	defer f.Close()
-	data, err := io.ReadAll(f)
-	if err != nil {
-		return nil
-	}
-	users := make(map[string]string)
-	switch auth.Format {
-	case "JSON":
-		json.Unmarshal(data, &users)
-	case "YAML":
-		yaml.Unmarshal(data, &users)
-	case "TOML":
-		toml.Unmarshal(data, &users)
-	case "ENV":
-		if e, err := godotenv.Unmarshal(string(data)); err == nil {
-			users = e
-		}
-	}
-	return users
-}
-
-func (auth *AuthConfig) runScript(username, password string, resultOut **AuthResult) error {
-	vm := processor.New(auth.config.BaseDir, nil, auth.config.AppConfig)
-	vm.Set("username", username)
-	vm.Set("user", username)
-	vm.Set("password", password)
-
-	var storedPwd AtomicString
-	vm.Set("checkPwd", func(call goja.FunctionCall) goja.Value {
-		if len(call.Arguments) == 0 {
-			return vm.ToValue(storedPwd.Load() != "")
-		}
-		p := call.Arguments[0].ToString().String()
-		storedPwd.Store(p)
-		return vm.ToValue(auth.CheckPwd(p, password))
-	})
-	vm.Set("setPwd", func(call goja.FunctionCall) goja.Value {
-		if len(call.Arguments) > 0 {
-			storedPwd.Store(call.Arguments[0].ToString().String())
-		}
-		return goja.Undefined()
-	})
-	cfgObj := vm.NewObject()
-	for k, v := range auth.Configs {
-		cfgObj.Set(k, v)
-	}
-	vm.Set("config", cfgObj)
-
-	passed := make(chan bool, 1)
-	var closed atomic.Bool
-	var rejectMsg string
-	vm.Set("allow", func() {
-		if closed.CompareAndSwap(false, true) {
-			passed <- true
-		}
-	})
-	vm.Set("reject", func(msg ...string) {
-		if closed.CompareAndSwap(false, true) {
-			if len(msg) > 0 {
-				rejectMsg = msg[0]
-			}
-			passed <- false
-		}
-	})
-
-	code := auth.Handler
-	if !auth.Inline {
-		b, err := os.ReadFile(auth.Handler)
-		if err != nil {
-			return err
-		}
-		code = string(b)
-	}
-	vm.RunString(code)
-
-	if <-passed {
-		if resultOut != nil {
-			*resultOut = &AuthResult{Username: username, Secret: storedPwd.Load(), UseProto: useProto(auth)}
-		}
-		return nil
-	}
-	if rejectMsg != "" {
-		return errors.New(rejectMsg)
-	}
-	return errors.New("unauthorized")
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Utilities
-// ─────────────────────────────────────────────────────────────────────────────
-
-func useProto(auth *AuthConfig) bool {
-	return auth.Configs != nil && isTrue(auth.Configs["PROTO"])
-}
 
 func isBool(s string) bool  { return isTrue(s) || isFalse(s) }
 func isTrue(s string) bool  { s = strings.ToLower(s); return s == "true" || s == "yes" || s == "on" }

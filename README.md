@@ -57,6 +57,14 @@ Basculez en mode **Headless CMS** instantanément. Définissez vos schémas en D
 
 **En mode simple (`./beba`)** : le dossier `./.data` est **généré automatiquement** dès le premier lancement. Contrairement à un simple serveur statique, Beba offre une **persistance réelle** (SQLite, Sessions, Cache). Redémarrez votre serveur autant que vous voulez, vos données restent intactes.
 
+### Authentification & OAuth2 Unifiés
+Gérez vos utilisateurs et identités externes avec une syntaxe déclarative globale `AUTH [name] DEFINE`.
+- Sources locales : Fichiers JSON/YAML/TOML/CSV, utilisateurs statiques.
+- Logique custom : Authentification scriptable en JavaScript (`allow()` / `reject()`).
+- **OAuth2 Client** : Connexion via Google, GitHub, etc. (`STRATEGY`).
+- **OAuth2 Server** : Transformez Beba en fournisseur d'identité (`SERVER`).
+Montage automatique des APIs standard (`/auth/login`, `/auth/me`, `/auth/callback/:strategy`) sur vos routes.
+
 ### Hub realtime massivement scalable
 Le cœur du système : un hub de messagerie haute performance capable de gérer **plus d'un million de clients simultanés**.
 - **SSE** (Server-Sent Events)
@@ -107,6 +115,9 @@ Un seul port, des protocoles multiples. Grâce au **Binder**, vous pouvez mixer 
 - MQTT
 - DTP (protocole IoT maison)
 - Protocoles JavaScript personnalisés
+- **Contrôle déclaratif** : Désactivation fine des fonctionnalités (ex. `DISABLE ADMIN UI`, `DISABLE DEFAULT API`) via la directive `DISABLE`.
+- **API CRUD Standardisée** : REST API automatique sur `/api/_schema` et `/api/:schema`.
+- **Admin UI** : Dashboard moderne accessible sur `/_admin`.
 
 Configuration déclarative via des fichiers `.bind`.
 

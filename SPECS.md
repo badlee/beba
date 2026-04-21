@@ -25,7 +25,11 @@ Ce document définit les tâches prioritaires pour l'évolution du projet.
 - [x] **[Technique]** Multiplexage de protocoles sur le même port (blocs imbriqués ex. `HTTP` + `DTP` dans `TCP` ou `UDP`).
 - [x] **[Technique]** Protocole `DTP` : integration native TCP/UDP avec bridge automatique vers le Hub SSE (`dtp.device.<id>`).
 - [x] **[Technique]** `SubTypeFromString` : support des chaines hexadécimales (ex: `0x01`) pour les subtypes DTP.
-- [x] **[Technique]** Directive `AUTH` universelle : support multi-format (JSON, YAML, CSV, USER...) et scriptable (JS `allow()`/`reject(msg...)`) avec support **Bcrypt** et canaux bufferisés.
+- [x] **[Technique]** Directive `AUTH` globale et universelle : registre d'authentification unifié indépendant des protocoles.
+- [x] **[Technique]** Stratégies locales (JSON, YAML, CSV, USER...) et scriptables (JS `allow()`/`reject(msg...)`) avec support **Bcrypt**.
+- [x] **[Technique]** Support OAuth2 (Client) intégré pour les connexions sociales via la directive `STRATEGY`.
+- [x] **[Technique]** Squelette de support OAuth2 (Provider) via la directive `SERVER` pour que Beba agisse comme fournisseur d'identité.
+- [x] **[Technique]** APIs unifiées `/auth/login`, `/auth/me`, `/auth/callback/:strategy` intégrables via `AUTH [name] [path]` dans le `HTTP`.
 - [x] **[Technique]** Module `dtp` en JavaScript : client complet avec `newClient`, `connect`, `on`, `sendData`, `ping`, `disconnect`.
 - [x] **[Technique]** Multiplexage intelligent : optimisation pour un protocole unique sur un port (évite le timeout de peeking).
 - [x] **[Technique]** Centralisation de la résolution de contenu via `RouteConfig.Content()` pour tous les protocoles.
@@ -38,6 +42,7 @@ Ce document définit les tâches prioritaires pour l'évolution du projet.
 - [x] **[Technique]** Support du protocole Socket.IO unifié via la méthode `IO`.
 - [x] **[Technique]** Support des layouts hiérarchiques (`_layout.html`, _layout.js) avec héritage et injection de contenu.
 - [x] **[Technique]** Support des fichiers partiels (`.partial.[html|js]`) pour bypasser les layouts.
+- [x] **[Technique]** Système de feature-toggling déclaratif `DISABLE [TYPE] [FEATURE]` (ex. `DEFAULT API`, `ADMIN UI`) avec API `Enabled/Disabled` (strict/loose) et cache RWMutex haute performance.
 - [x] **[Sécurité]** Implémentation d'une couche de sécurité de niveau 4 (SYN/Accept pour TCP, Packet-level pour UDP) : directive `SECURITY` avec support `CONNECTION` (Rate, IP, Geo) et `GEOJSON`.
 - [x] **[Sécurité]** Protection par défaut (Baseline) de 100r/s (burst 10) appliquée globalement à TOUS les protocoles (TCP, UDP, HTTP, DTP).
 - [x] **[Sécurité]** Surcharge de la politique globale via l'argument `[default]` dans un bloc `SECURITY`.

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -20,22 +19,12 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/gofiber/contrib/v3/websocket"
-	"github.com/gofiber/fiber/v3"
-	"github.com/gofiber/fiber/v3/middleware/compress"
-	"github.com/gofiber/fiber/v3/middleware/cors"
-	"github.com/gofiber/fiber/v3/middleware/logger"
-	"github.com/gofiber/fiber/v3/middleware/proxy"
-	"github.com/gofiber/fiber/v3/middleware/static"
 	"github.com/spf13/pflag"
 
 	"beba/modules/binder"
-	"beba/modules/crud"
 	"beba/modules/db"
 	"beba/modules/storage"
-	"beba/modules/sse"
 	appconfig "beba/plugins/config"
-	"beba/plugins/httpserver"
 	"beba/processor"
 )
 
@@ -237,6 +226,14 @@ func main() {
 		// depuis le répertoire courant après chdir pour les enfants vhost
 		if isChild {
 			appconfig.LoadEnvFiles(cfg.EnvFiles)
+		}
+
+		// Ensure .vhost.bind exists or load it
+		if len(cfg.BindFiles) == 0 {
+			vhostFile, err := ensureVhostBind(cfg, ".", "")
+			if err == nil {
+				cfg.BindFiles = []string{vhostFile}
+			}
 		}
 	} else if cfg.VHosts {
 		// Master process in vhost mode - we don't want to initialize default DB/Storage here
@@ -466,224 +463,20 @@ func main() {
 	}
 
 	// -------------------- MODE CHILD / SINGLE --------------------
-
-	// Control Socket for IPC Validation (already handled in MODE BINDER if --bind used, but needed for custom non-binder childs if any)
-	if cfg.ControlSocket != "" && len(cfg.BindFiles) == 0 {
+	// This mode is now unified with Binder mode.
+	// If no bind files were provided or generated, we fall back to a minimal default.
+	if len(cfg.BindFiles) == 0 {
+		exit(fmt.Errorf("Failed to initialize server: no bind configuration found"))
+	}
+	
+	// Control Socket for IPC Validation
+	if cfg.ControlSocket != "" {
 		go runControlSocket(cfg, currentManager)
 	}
 
-	app := httpserver.New(httpserver.Config{
-		AppName:      "beba",
-		Stdout:       globalStdout,
-		Stderr:       globalStderr,
-		ReadTimeout:  cfg.ReadTimeout,
-		WriteTimeout: cfg.WriteTimeout,
-		IdleTimeout:  cfg.IdleTimeout,
-		Secret:       cfg.SecretKey,
-	})
-
-	// Initialize default CRUD (API at /api, Admin at /api/_admin)
-	if err := crud.InitializeDefaultCRUD(app); err != nil {
-		log.Printf("Warning: failed to initialize default CRUD: %v", err)
-	}
-
-	// realtime SSE + WebSocket + Socket.IO + MQTT
-	realtime := app.Group("/api/realtime")
-	// sse handler
-	realtime.Get("/sse", func(c fiber.Ctx) error { return sse.Handler(c) })
-	realtime.Get("/sse/:id", func(c fiber.Ctx) error { return sse.Handler(c) })
-	realtime.Get("/sse/:id/:channel", func(c fiber.Ctx) error { return sse.Handler(c) })
-	// websocket handler
-	realtime.Use("/ws", sse.WSUpgradeMiddleware)
-	realtime.Get("/ws", websocket.New(func(conn *websocket.Conn) { sse.WSHandler(conn) }))
-	realtime.Get("/ws/:id", websocket.New(func(conn *websocket.Conn) { sse.WSHandler(conn) }))
-	realtime.Get("/ws/:id/:channel", websocket.New(func(conn *websocket.Conn) { sse.WSHandler(conn) }))
-	// socket.io handler
-	realtime.Use("/io", func(c fiber.Ctx) error {
-		if websocket.IsWebSocketUpgrade(c) {
-			c.Locals("sid", c.Cookies("sid")) // optionnel
-			return c.Next()
-		}
-		return fiber.ErrUpgradeRequired
-	})
-	realtime.Get("/io", sse.SIOHandler())
-	realtime.Get("/io/:id", sse.SIOHandler())
-	// mqtt handler
-	mqttCfg := sse.MQTTConfig{
-		Auth: sse.MQTTAllowAllAuth(),
-		OnPublish: func(id, topic string, payload []byte, qos byte) bool {
-			log.Printf("mqtt publish: %s → %s", id, topic)
-			return true
-		},
-	}
-
-	realtime.Use("/mqtt", sse.MQTTUpgradeMiddleware)
-	realtime.Get("/mqtt", websocket.New(sse.MQTTHandler(mqttCfg)))
-	realtime.Get("/mqtt/:id", websocket.New(sse.MQTTHandler(mqttCfg)))
-
-	// Logger d'accès
-	if !cfg.Silent {
-		app.Use(logger.New(logger.Config{Stream: globalStdout}))
-	}
-
-	// CORS
-	if cfg.CORS {
-		app.Use(cors.New())
-	}
-
-	// Compression
-	if cfg.Gzip || cfg.Brotli || cfg.Deflate {
-		app.Use(compress.New(compress.Config{
-			Level: compress.LevelBestSpeed,
-			Next: func(c fiber.Ctx) bool {
-				// SSE et WS ne doivent pas être compressés
-				p := c.Path()
-				if strings.HasPrefix(p, "/api/realtime/") {
-					return true
-				}
-				enc := c.Get("Accept-Encoding")
-				var allowed []string
-				if cfg.Brotli && strings.Contains(enc, "br") {
-					allowed = append(allowed, "br")
-				}
-				if cfg.Gzip && strings.Contains(enc, "gzip") {
-					allowed = append(allowed, "gzip")
-				}
-				if cfg.Deflate && strings.Contains(enc, "deflate") {
-					allowed = append(allowed, "deflate")
-				}
-				if len(allowed) == 0 {
-					return true
-				}
-				c.Request().Header.Set("Accept-Encoding", strings.Join(allowed, ", "))
-				return false
-			},
-		}))
-	}
-
-	// Robots
-	if cfg.Robots {
-		app.Get("/robots.txt", func(c fiber.Ctx) error {
-			content, err := os.ReadFile(cfg.RobotsFile)
-			if err != nil {
-				return c.SendString("User-agent: *\nDisallow: /")
-			}
-			return c.Send(content)
-		})
-	}
-
-	// FsRouter — routeur file-based principal (layouts, middlewares, error handlers, etc.)
-	if !cfg.NoTemplate {
-		routerCfg := httpserver.RouterConfig{
-			Root:        root,
-			TemplateExt: cfg.TemplateExt,
-			IndexFile:   strings.TrimSuffix(cfg.IndexFile, filepath.Ext(cfg.IndexFile)),
-			AppConfig:   cfg,
-		}
-		if !cfg.Silent {
-			fmt.Print(httpserver.FsRouterDebug(routerCfg))
-		}
-		h, err := httpserver.FsRouter(routerCfg)
-		if err != nil {
-			exit(fmt.Errorf("FsRouter initialization failed: %v", err))
-		}
-		app.Use(h)
-	} else {
-		// Fallback : serveur de fichiers statiques basique (sans FsRouter)
-		staticConfig := static.Config{
-			Browse:     cfg.DirListing,
-			IndexNames: []string{cfg.IndexFile},
-			MaxAge:     cfg.CacheTime,
-		}
-		if !cfg.AutoIndex {
-			staticConfig.IndexNames = []string{}
-		}
-		app.Use("/", static.New(root, staticConfig))
-	}
-
-	// Proxy fallback
-	if cfg.ProxyURL != "" {
-		app.Use(func(c fiber.Ctx) error {
-			return proxy.Do(c, cfg.ProxyURL+c.Path())
-		})
-	}
-
-	// -------------------- DÉMARRAGE --------------------
-
-	if !cfg.Silent {
-		schema := "http"
-		if cfg.HTTPS {
-			schema = "https"
-		}
-		fmt.Printf("Starting up beba, serving %s through %s\n\n", root, schema)
-		fmt.Println("beba settings:")
-		fmt.Printf("\tCORS: %s\n", boolToStr(cfg.CORS, "enabled", "disabled"))
-		fmt.Printf("\tCache: %d seconds\n", cfg.CacheTime)
-		fmt.Printf("\tRead Timeout: %s\n", cfg.ReadTimeout)
-		fmt.Printf("\tWrite Timeout: %s\n", cfg.WriteTimeout)
-		fmt.Printf("\tIdle Timeout: %s\n", cfg.IdleTimeout)
-		fmt.Printf("\tDirectory Listings: %s\n", boolToStr(cfg.DirListing, "visible", "not visible"))
-		fmt.Printf("\tAutoIndex: %s\n", boolToStr(cfg.AutoIndex, "visible", "not visible"))
-		fmt.Printf("\tGZIP: %v  Brotli: %v  Deflate: %v\n", cfg.Gzip, cfg.Brotli, cfg.Deflate)
-		fmt.Printf("\tTemplate: %s  HTMX: %s\n",
-			boolToStr(!cfg.NoTemplate, "enabled", "disabled"),
-			boolToStr(!cfg.NoHtmx, "enabled", "disabled"))
-		fmt.Printf("\tRobots: %v\n", cfg.Robots)
-		fmt.Printf("\tProxy: %s\n", cfg.ProxyURL)
-		fmt.Printf("\tHTTPS: %v ", cfg.HTTPS)
-		if cfg.HTTPS && cfg.Cert != "" && cfg.Key != "" {
-			fmt.Printf("Cert: %s Key: %s\n", cfg.Cert, cfg.Key)
-		} else if cfg.HTTPS && cfg.Domain != "" {
-			fmt.Printf("Domain: %s (let's encrypt)\n", cfg.Domain)
-		} else if cfg.HTTPS {
-			fmt.Printf("(self-signed)\n")
-		}
-		fmt.Printf("\tAddress: %s  Port: %d\n", cfg.Address, cfg.Port)
-		if cfg.Socket != "" {
-			fmt.Printf("\tSocket: %s\n", cfg.Socket)
-		}
-		fmt.Printf("\nUrls:\n")
-		for _, ip := range getAvailableIPs(cfg.Address) {
-			fmt.Printf("  %s://%s:%d\n", schema, ip, cfg.Port)
-		}
-		fmt.Println("\n\nHit CTRL-C to stop the server")
-	}
-
-	listenAddr := fmt.Sprintf("%s:%d", cfg.Address, cfg.Port)
-
-	if cfg.Socket != "" {
-		if !cfg.Silent {
-			id := "Unix socket"
-			if getSocketNetwork(cfg.Socket) == "npipe" {
-				id = "Windows Named Pipe"
-			}
-			fmt.Printf("Listening on %s: %s\n", id, cfg.Socket)
-		}
-		ln, err := listenSocket(getSocketNetwork(cfg.Socket), cfg.Socket)
-		if err != nil {
-			exit(fmt.Errorf("Failed to listen on %s: %v", cfg.Socket, err))
-		}
-		exit(app.Listener(ln))
-	} else if cfg.HTTPS {
-		if cfg.Cert != "" && cfg.Key != "" {
-			exit(app.Listen(listenAddr, fiber.ListenConfig{
-				CertFile:    cfg.Cert,
-				CertKeyFile: cfg.Key,
-			}))
-		} else {
-			tlsCfg, err := httpserver.GetTLSConfig(cfg)
-			if err != nil {
-				exit(fmt.Errorf("failed to setup HTTPS: %v", err))
-			}
-			ln, err := net.Listen("tcp", listenAddr)
-			if err != nil {
-				exit(fmt.Errorf("failed to listen on %s: %v", listenAddr, err))
-			}
-			exit(app.Listener(tls.NewListener(ln, tlsCfg)))
-		}
-	} else {
-		exit(app.Listen(listenAddr))
-	}
+	// Binder mode already handles the rest (scroll up to -------------------- MODE BINDER --------------------)
+	// We just need to make sure we don't fall through to the old manual initialization.
+	select {}
 }
 
 // -------------------- HELPERS --------------------
@@ -765,21 +558,10 @@ func scanVhosts(vhostDir string, defaultPort int) ([]VhostInfo, error) {
 		vhostRoot := filepath.Join(vhostDir, entry.Name())
 		vhostName := entry.Name()
 
-		bindFile := filepath.Join(vhostRoot, ".vhost.bind")
-		hclFile := filepath.Join(vhostRoot, ".vhost")
-
-		vhostFile := bindFile
-		if _, err := os.Stat(bindFile); os.IsNotExist(err) {
-			if _, err := os.Stat(hclFile); err == nil {
-				vhostFile = hclFile
-			} else {
-				// Auto-generate a minimal .vhost.bind for this directory
-				content := fmt.Sprintf("HTTP %s\n  PORT %d\n  GET / FILE .\nEND HTTP\n", vhostName, defaultPort)
-				if err := os.WriteFile(bindFile, []byte(content), 0644); err != nil {
-					log.Printf("Warning: failed to auto-generate %s: %v", bindFile, err)
-				}
-				vhostFile = bindFile
-			}
+		vhostFile, err := ensureVhostBind(&appconfig.AppConfig{Port: defaultPort}, vhostRoot, vhostName)
+		if err != nil {
+			log.Printf("Warning: failed to ensure vhost config at %s: %v", vhostRoot, err)
+			continue
 		}
 
 		bcfg, _, err := binder.ParseFile(vhostFile)
@@ -1203,4 +985,26 @@ func runUDPProxy(port int, workers map[string]string, cfg *appconfig.AppConfig) 
 			}
 		}
 	}
+}
+
+func ensureVhostBind(cfg *appconfig.AppConfig, root string, domain string) (string, error) {
+	bindPath := filepath.Join(root, ".vhost.bind")
+	hclPath := filepath.Join(root, ".vhost")
+
+	if _, err := os.Stat(bindPath); err == nil {
+		return bindPath, nil
+	}
+	if _, err := os.Stat(hclPath); err == nil {
+		return hclPath, nil
+	}
+
+	// Auto-generate a minimal .vhost.bind for this directory
+	if domain == "" {
+		domain = "0.0.0.0"
+	}
+	content := fmt.Sprintf("HTTP %s\n  PORT %d\n  ROUTER .\nEND HTTP\n", domain, cfg.Port)
+	if err := os.WriteFile(bindPath, []byte(content), 0644); err != nil {
+		return "", err
+	}
+	return bindPath, nil
 }

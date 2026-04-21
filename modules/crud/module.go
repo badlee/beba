@@ -49,7 +49,7 @@ func registerCrudInstance(name string, inst *CrudInstance, isDefault bool) {
 }
 
 // InitializeDefaultCRUD ensures the default database is connected and mounts a CRUD instance.
-func InitializeDefaultCRUD(app *httpserver.HTTP) error {
+func InitializeDefaultCRUD(app *httpserver.HTTP, enableAdmin bool) error {
 	conn := dbpkg.GetConnection()
 	if conn == nil {
 		conn = dbpkg.EnsureDefaultDatabase()
@@ -76,9 +76,14 @@ func InitializeDefaultCRUD(app *httpserver.HTTP) error {
 
 	registerCrudInstance("default", inst, true)
 
-	// Mount API and Admin (MountOn already calls mountAdmin)
-	if err := MountOn(app, inst, "/api"); err != nil {
+	// Mount API at /api
+	if err := mountRoutes(app, "/api", inst.db, inst.providers, inst.secret, inst.baseDir, inst.cfg.Auth); err != nil {
 		return fmt.Errorf("failed to mount default CRUD API: %w", err)
+	}
+
+	// Mount Admin UI at /_admin (globally) if not disabled
+	if enableAdmin {
+		mountAdmin(app, "", "/api", inst.db, inst.secret, inst.cfg.Auth)
 	}
 
 	return nil

@@ -13,9 +13,16 @@ DATABASE [provider_url]                // Connexion DB (SQLite, MySQL, Postgres,
 PAYMENT [provider_url]                 // Connexion Paiement (Stripe, MoMo, X402)
 SECURITY [name]                        // Profil de sécurité réutilisable
 
+AUTH [name] DEFINE                     // Enregistre un gestionnaire d'authentification global
+    // Configuration globale (base de données, secret...)
+    // + Définition des stratégies (USER, USERS, AUTH CSV, AUTH BEGIN...)
+    // + Définition des clients OAuth2 (STRATEGY google DEFINE...)
+    // + Définition du serveur OAuth2 (SERVER DEFINE...)
+END AUTH
+
 [PROTOCOL] [address]                   // Groupe d'écoute (TCP, UDP, HTTP, HTTPS, MQTT, MAIL...)
     // Si imbriqué dans TCP, [address] est optionnel (hérité du parent)
-
+    DISABLE [TYPE] [FEATURE] 
     // -- Configuration & Environnement --
     ENV PREFIX [prefix]                // Préfixe pour les vars d'env (défaut: APP_)
     ENV [filepath]                     // Charge un fichier .env
@@ -69,13 +76,15 @@ SECURITY [name]                        // Profil de sécurité réutilisable
     ERROR [code] TEMPLATE [filepath] [contentType]
 
     // -- Authentication --
+    // Montage d'un gestionnaire global:
+    AUTH [name] [path]                 // Monte le gestionnaire d'authentification [name] sur la route [path] (ex: /api/auth)
+    
+    // Déclarations en ligne (dépréciées au profit du gestionnaire global) :
     AUTH [JSON|YAML|TOML|ENV] [filepath] // Fichier clé/valeur pour user:pwd
-    AUTH CSV [filepath]               // Fichier CSV "username;pwd;[proto_bool]" (proto_bool optionnel pour DTP)
+    AUTH CSV [filepath]               // Fichier CSV "username;pwd;[proto_bool]"
     AUTH USER [USER_NAME] [PWD]        // Déclaration utilisateur unique
     AUTH [KEY=VALUE ...]               // Authentification scriptée JS
         /* JS code */
-        // Variables: username, password (ou user, pwd)
-        // Helpers: allow(), reject(msg), allow(secret, proto_bool) pour DTP
     END AUTH
 
     // -- Événements (HTTP/DTP) --
@@ -239,6 +248,24 @@ REGISTER PROTOCOL DTP "protocols/dtp.js"
 ```
 
 > Le fichier JS doit exposer deux fonctions globales : `match(buffer)` et `handle()`.
+
+### `DISABLE [TYPE] [FEATURE]`
+Allows programmatically deactivating core features or protocols. Features are cached for high-performance lookups.
+
+| Type | Feature | Description |
+|---|---|---|
+| `DEFAULT` | `API` | Disables **all** default endpoints (CRUD + Realtime). |
+| `DEFAULT` | `CRUD` | Disables only the auto-generated database REST API (`/api/*`). |
+| `DEFAULT` | `DATABASE` | Alias for `CRUD`. Disables the database REST API. |
+| `DEFAULT` | `REALTIME` | Disables only the Realtime/SSE/WS endpoints (`/api/realtime/*`). |
+| `ADMIN`   | `UI`       | Disables the administration dashboard on `/_admin`. |
+
+```hcl
+HTTP 0.0.0.0:8080
+    DISABLE DEFAULT API      // Disables both CRUD and Realtime default endpoints
+    DISABLE DEFAULT REALTIME // Disables only the Realtime /api/realtime endpoints
+END HTTP
+```
 
 ### `SECURITY [name] [default?]`
 Définit un profil de sécurité (WAF/Network) réutilisable par d'autres protocoles ou appliqué globalement.
