@@ -1077,13 +1077,13 @@ func matchRoute(r *routeEntry, method, path string, c fiber.Ctx) (bool, bool) {
 	if r.isCatchAll {
 		// Le pattern est /prefix/* : vérifier le préfixe
 		prefix := strings.TrimSuffix(r.urlPattern, "*")
-		if strings.HasPrefix(path, prefix) {
+		if len(path) >= len(prefix) && strings.EqualFold(path[:len(prefix)], prefix) {
 			pathMatch = true
-			// Injecter le paramètre catch-all via Locals
-			c.Locals("_fsrouter_catchall", strings.TrimPrefix(path, prefix))
+			// Injecter le paramètre catch-all via Locals (en conservant la casse originale pour la valeur)
+			c.Locals("_fsrouter_catchall", path[len(prefix):])
 		}
 	} else if !r.isDynamic {
-		pathMatch = (r.urlPattern == path)
+		pathMatch = strings.EqualFold(r.urlPattern, path)
 	} else {
 		// Route dynamique : matcher segment par segment
 		patternSegs := strings.Split(strings.TrimPrefix(r.urlPattern, "/"), "/")
@@ -1095,7 +1095,7 @@ func matchRoute(r *routeEntry, method, path string, c fiber.Ctx) (bool, bool) {
 			for i, ps := range patternSegs {
 				if strings.HasPrefix(ps, ":") {
 					params[ps[1:]] = pathSegs[i]
-				} else if ps != pathSegs[i] {
+				} else if !strings.EqualFold(ps, pathSegs[i]) {
 					pathMatch = false
 					break
 				}
