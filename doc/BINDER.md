@@ -492,18 +492,37 @@ STATIC /downloads "/var/www/files" [download=true]
 
 ### Routeur de Vues (`ROUTER`)
 
-Système de routage automatique pour les templates HTML/Mustache. Mappe les URLs aux fichiers du répertoire de vues.
+Système de routage automatique pour les templates HTML/Mustache. Mappe les URLs aux fichiers du répertoire de vues. Supporte le **hot-reload** (ajout/suppression/modification de fichiers détectés en temps réel) et un **cache fichier intelligent** avec TTL configurable.
 
 ```hcl
 ROUTER [path] [views_dir] [options]
 ```
 
-Les options sont identiques à ceux de `STATIC`.
+**Arguments spécifiques à `ROUTER` :**
 
-**Exemple :**
+| Argument | Type | Description |
+|----------|------|-------------|
+| `cacheTtl` | duration | Durée de vie des fichiers en cache mémoire. Overrides le flag `--cache-ttl`. Ex: `10m`, `30s`, `1h`. `0` = cache permanent. |
+| `exclude` | string | Patterns de fichiers/dossiers à exclure (séparés par des virgules). |
+
+Les autres options sont identiques à ceux de `STATIC` (`indexName`, `browse`, `compress`, `cache`, etc.).
+
+**Exemples :**
 ```hcl
-ROUTER /app "./views" [cache=1h]
+# Cache fichier de 10 minutes (override du --cache-ttl global)
+ROUTER /app "./views" @[cacheTtl="10m"]
+
+# Cache permanent (pas de goroutine de cleanup)
+ROUTER / "./pages" @[cacheTtl="0"]
+
+# Avec exclusion de dossiers
+ROUTER / "./pages" @[exclude="node_modules,tmp"]
 ```
+
+> [!NOTE]
+> Le hot-reload des routes (ajout/suppression de fichiers `.html`/`.js`) est actif par défaut en mode développement (`--hot-reload`). Les modifications de contenu invalident uniquement le cache ; les changements de structure (nouveaux fichiers, suppressions) déclenchent un rescan automatique avec un debounce de 150ms.
+>
+> En mode production (`--no-hot-reload`), le cache est permanent et aucun watcher n'est démarré.
 
 ---
 

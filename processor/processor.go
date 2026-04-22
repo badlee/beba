@@ -254,9 +254,25 @@ func ProcessString(content string, dir string, c fiber.Ctx, cfg *config.AppConfi
 	return injectHTMX(rendered, cfg), nil
 }
 
-// ProcessFile reads a file, executes embedded JS, and renders Mustache
+// ProcessFile reads a file (from cache or disk), executes embedded JS, and renders Mustache.
+// If the Fiber context carries a "_fsrouter_cache" Local implementing ReadFile,
+// it is used to avoid repeated disk I/O.
 func ProcessFile(path string, c fiber.Ctx, cfg *config.AppConfig, settings ...map[string]string) (string, error) {
-	content, err := os.ReadFile(path)
+	var content []byte
+	var err error
+
+	// Utiliser le cache FsRouter si disponible (injecté via c.Locals)
+	type fileCacheReader interface {
+		ReadFile(string) ([]byte, error)
+	}
+	if c != nil {
+		if cache, ok := c.Locals("_fsrouter_cache").(fileCacheReader); ok {
+			content, err = cache.ReadFile(path)
+		}
+	}
+	if content == nil && err == nil {
+		content, err = os.ReadFile(path)
+	}
 	if err != nil {
 		return "", err
 	}

@@ -44,6 +44,10 @@ Ce document définit les tâches prioritaires pour l'évolution du projet.
 - [x] **[Technique]** Support des layouts hiérarchiques (`_layout.html`, _layout.js) avec héritage et injection de contenu.
 - [x] **[Technique]** Support des fichiers partiels (`.partial.[html|js]`) pour bypasser les layouts.
 - [x] **[Technique]** Système de feature-toggling déclaratif `DISABLE [TYPE] [FEATURE]` (ex. `DEFAULT API`, `ADMIN UI`) avec API `Enabled/Disabled` (strict/loose) et cache RWMutex haute performance.
+- [x] **[Technique]** FsRouter Hot-Reload : surveillance en temps réel via `fsnotify` avec debounce 150ms. Ajout/suppression de fichiers déclenchent un rescan ; modifications invalident le cache.
+- [x] **[Technique]** Cache fichier intelligent (`fileCache`) : lazy-loading TTL avec goroutine de cleanup périodique (60s). TTL contrôlable via `--cache-ttl` (CLI) et `cacheTtl` (directive ROUTER).
+- [x] **[Technique]** `routerState` thread-safe : `RWMutex` + `snapshot()` pour accès concurrent sûr à la table de routage.
+- [x] **[Technique]** Mode production (`--no-hot-reload`) : cache permanent sans goroutine de cleanup ni watcher `fsnotify`.
 - [x] **[Sécurité]** Implémentation d'une couche de sécurité de niveau 4 (SYN/Accept pour TCP, Packet-level pour UDP) : directive `SECURITY` avec support `CONNECTION` (Rate, IP, Geo) et `GEOJSON`.
 - [x] **[Sécurité]** Protection par défaut (Baseline) de 100r/s (burst 10) appliquée globalement à TOUS les protocoles (TCP, UDP, HTTP, DTP).
 - [x] **[Sécurité]** Surcharge de la politique globale via l'argument `[default]` dans un bloc `SECURITY`.
@@ -204,4 +208,4 @@ Voici la liste des fichiers de documentation et leur utilité :
 - [doc/PAYMENT.md](doc/PAYMENT.md) : Module de paiement (Stripe, MoMo, providers custom).
 
 ---
-*Dernière mise à jour : 15 Avril 2026*
+*Dernière mise à jour : 22 Avril 2026*

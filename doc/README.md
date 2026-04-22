@@ -42,4 +42,4 @@ Welcome to the **beba** official documentation. This server is a high-speed, mul
 
 - **[Virtual Hosting (VHost)](VHOST.md)**: Multi-domain management and SSL termination.
 - **[Admin Interface](ADMIN.md)**: Guide to the built-in web dashboard on `/_admin` (deactivatable via `DISABLE ADMIN UI`).
-- **[Routing System](ROUTER.md)**: Deep dive into path matching, rewrites, and redirects.
+- **[Routing System](ROUTER.md)**: Deep dive into file-based routing, hot-reload, intelligent file caching (`--cache-ttl`), and per-route cache control.

@@ -371,6 +371,7 @@ mon-projet/
 | `--port, -p` | Port d'écoute | 8080 |
 | `--bind, -b` | Fichier(s) de configuration `.bind` | - |
 | `--hot-reload, -H` | Rechargement à chaud | true |
+| `--cache-ttl` | Durée de vie du cache fichier FsRouter (ex: `5m`, `30s`, `0` = permanent) | 5m |
 | `--vhosts, -V` | Mode Virtual Hosts | false |
 | `--https` | Activer HTTPS | false |
 | `--cert`, `--key` | Certificat SSL | - |

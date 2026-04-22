@@ -35,7 +35,8 @@ type AppConfig struct {
 	ConfigFiles []string `json:"config_files,omitempty" yaml:"config_files,omitempty" toml:"config_files,omitempty" mapstructure:"config_files" env:"CONFIG_FILES" flag:"#config-file|c"   desc:"Config files (json/yaml/toml), comma-separated"`
 	EnvFiles    []string `json:"env_files,omitempty"    yaml:"env_files,omitempty"    toml:"env_files,omitempty"    mapstructure:"env_files"    env:"ENV_FILES"    flag:"#env-file"        desc:"Env files (.env/.conf), comma-separated"`
 	EnvPrefix   string   `json:"env_prefix,omitempty"   yaml:"env_prefix,omitempty"   toml:"env_prefix,omitempty"   mapstructure:"env_prefix"   env:"PREFIX"        flag:"#env-prefix"      desc:"Environment variable prefix"`
-	HotReload   bool     `json:"hot_reload"  yaml:"hot_reload"  toml:"hot_reload"  mapstructure:"hot_reload"  env:"HOT_RELOAD"  flag:"hot-reload|H"  default:"true"       desc:"Enable hot-reload"`
+	HotReload   bool          `json:"hot_reload"  yaml:"hot_reload"  toml:"hot_reload"  mapstructure:"hot_reload"  env:"HOT_RELOAD"  flag:"hot-reload|H"  default:"true"       desc:"Enable hot-reload"`
+	CacheTTL    time.Duration `json:"cache_ttl"   yaml:"cache_ttl"   toml:"cache_ttl"   mapstructure:"cache_ttl"   env:"CACHE_TTL"   flag:"cache-ttl"     default:"300"        desc:"File cache TTL for FsRouter in seconds (0=permanent, e.g. 300=5min)"`
 
 	// ---- bind ----------------------------------------------------------
 	Port          int    `json:"port"             yaml:"port"             toml:"port"             mapstructure:"port"    env:"PORT"    validate:"min=1,max=65535" flag:"#port|p"    default:"8080"    desc:"Port to listen on"`
@@ -114,6 +115,7 @@ func DefaultConfig() *AppConfig {
 		EnvFiles:    []string{".env"},
 		EnvPrefix:   "APP_",
 		HotReload:   true,
+		CacheTTL:    5 * time.Minute,
 
 		Port:    8080,
 		Address: "0.0.0.0",

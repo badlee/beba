@@ -485,11 +485,15 @@ module.exports = {
 };
 `)
 	app := fiber.New()
-	app.Use(FsRouter(RouterConfig{
+	h, err := FsRouter(RouterConfig{
 		Root:      dir,
 		AppConfig: &config.AppConfig{NoHtmx: true},
 		Settings:  map[string]string{"appName": "TestApp"},
-	}))
+	})
+	if err != nil {
+		t.Fatalf("FsRouter failed: %v", err)
+	}
+	app.Use(h)
 
 	code, body := do(t, app, "GET", "/info")
 	if code != http.StatusOK {
@@ -733,13 +737,17 @@ func TestFsRouter_404_CustomGoHandler(t *testing.T) {
 	dir := t.TempDir()
 
 	app := fiber.New()
-	app.Use(FsRouter(RouterConfig{
+	h, err := FsRouter(RouterConfig{
 		Root:      dir,
 		AppConfig: &config.AppConfig{NoHtmx: true},
 		NotFound: func(c fiber.Ctx) error {
 			return c.Status(404).SendString("go custom 404")
 		},
-	}))
+	})
+	if err != nil {
+		t.Fatalf("FsRouter failed: %v", err)
+	}
+	app.Use(h)
 
 	code, body := do(t, app, "GET", "/missing")
 	if code != 404 {
@@ -758,14 +766,18 @@ func TestFsRouter_ErrorHandler_JS(t *testing.T) {
 
 	called := false
 	app := fiber.New()
-	app.Use(FsRouter(RouterConfig{
+	h, fsErr := FsRouter(RouterConfig{
 		Root:      dir,
 		AppConfig: &config.AppConfig{NoHtmx: true},
 		ErrorHandler: func(c fiber.Ctx, err error) error {
 			called = true
 			return c.Status(500).SendString("caught: " + err.Error())
 		},
-	}))
+	})
+	if fsErr != nil {
+		t.Fatalf("FsRouter failed: %v", fsErr)
+	}
+	app.Use(h)
 
 	code, body := do(t, app, "GET", "/broken")
 
@@ -787,7 +799,7 @@ func TestFsRouter_ErrorHandler_Template(t *testing.T) {
 
 	called := false
 	app := fiber.New()
-	app.Use(FsRouter(RouterConfig{
+	h, fsErr := FsRouter(RouterConfig{
 		Root:        dir,
 		TemplateExt: ".html",
 		AppConfig:   &config.AppConfig{NoHtmx: true},
@@ -795,7 +807,11 @@ func TestFsRouter_ErrorHandler_Template(t *testing.T) {
 			called = true
 			return c.Status(500).SendString("template error caught")
 		},
-	}))
+	})
+	if fsErr != nil {
+		t.Fatalf("FsRouter failed: %v", fsErr)
+	}
+	app.Use(h)
 
 	code, _ := do(t, app, "GET", "/broken")
 
@@ -814,13 +830,17 @@ func TestFsRouter_Settings_Template(t *testing.T) {
 	writeFile(t, dir, "page.html", `<?js var t = settings.title; ?> {{t}}`)
 
 	app := fiber.New()
-	app.Use(FsRouter(RouterConfig{
+	h, err := FsRouter(RouterConfig{
 		Root:        dir,
 		TemplateExt: ".html",
 		IndexFile:   "index",
 		AppConfig:   &config.AppConfig{NoHtmx: true},
 		Settings:    map[string]string{"title": "My Site"},
-	}))
+	})
+	if err != nil {
+		t.Fatalf("FsRouter failed: %v", err)
+	}
+	app.Use(h)
 
 	code, body := do(t, app, "GET", "/page")
 	if code != http.StatusOK {
@@ -837,11 +857,15 @@ func TestFsRouter_Settings_JSHandler(t *testing.T) {
 context.SendString(settings.env || "no-settings");
 `)
 	app := fiber.New()
-	app.Use(FsRouter(RouterConfig{
+	h, err := FsRouter(RouterConfig{
 		Root:      dir,
 		AppConfig: &config.AppConfig{NoHtmx: true},
 		Settings:  map[string]string{"env": "production"},
-	}))
+	})
+	if err != nil {
+		t.Fatalf("FsRouter failed: %v", err)
+	}
+	app.Use(h)
 
 	_, body := do(t, app, "GET", "/conf")
 	if !strings.Contains(body, "production") {

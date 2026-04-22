@@ -141,3 +141,78 @@ Les layouts permettent d'entourer le contenu d'une page avec des éléments comm
 ## Gestion des Erreurs
 
 Les fichiers nommés par un code HTTP (ex: `404.html`, `500.js`) ou `_error.html` servent de handlers pour les codes d'erreur correspondants. Le routeur cherche le handler le plus proche dans la hiérarchie des dossiers.
+
+---
+
+## Hot-Reload des Routes
+
+Le FsRouter surveille en temps réel le répertoire des pages via `fsnotify`. Activé par défaut en mode développement (`--hot-reload`).
+
+### Comportement
+
+| Événement | Action |
+|-----------|--------|
+| Création d'un fichier `.html` ou `.js` | Rescan automatique → nouvelle route enregistrée |
+| Suppression / Renommage d'un fichier | Rescan automatique → route supprimée |
+| Modification du contenu | Cache invalidé uniquement (pas de rescan) |
+| Création d'un sous-dossier | Ajouté automatiquement au watcher |
+
+Un **debounce de 150ms** est appliqué pour éviter les rescans multiples lors d'opérations en rafale (copier/coller, git checkout, etc.).
+
+### Désactivation
+
+```bash
+# Désactiver le hot-reload (production)
+./beba --no-hot-reload
+```
+
+En mode production, aucun watcher `fsnotify` n'est démarré, et le cache est permanent.
+
+---
+
+## Cache Fichier Intelligent
+
+Le FsRouter intègre un cache mémoire **lazy-loading** pour les fichiers JS et templates. Les fichiers sont lus depuis le disque à la première requête, puis servis depuis la mémoire pour les requêtes suivantes.
+
+### Fonctionnement
+
+1. **Cache Miss** : Le fichier est lu depuis le disque et stocké en cache avec un timestamp.
+2. **Cache Hit** : Le fichier est servi depuis la mémoire. Le timestamp `lastAccess` est mis à jour (opération atomique).
+3. **Expiration** : Un goroutine de nettoyage supprime les entrées inactives depuis plus de `TTL` (par défaut 5 minutes). Le nettoyage s'exécute toutes les 60 secondes.
+4. **Invalidation** : Lorsqu'un fichier est modifié ou supprimé, le watcher invalide immédiatement l'entrée du cache.
+
+### Contrôle du TTL
+
+| Méthode | Exemple | Priorité |
+|---------|---------|----------|
+| **Directive ROUTER** (`cacheTtl`) | `ROUTER / ./pages @[cacheTtl="10m"]` | Haute (override tout) |
+| **Flag CLI** (`--cache-ttl`) | `./beba --cache-ttl=30s` | Moyenne |
+| **Défaut** | 5 minutes | Basse |
+
+Un TTL **≤ 0** (`0`, `-1`) active le mode **cache permanent** : aucun goroutine de nettoyage n'est démarré, les fichiers restent en mémoire indéfiniment.
+
+### Modes de fonctionnement
+
+| Mode | TTL | Cleanup | Watcher |
+|------|-----|---------|---------|
+| Développement (défaut) | `5m` | ✅ toutes les 60s | ✅ |
+| Développement (custom) | `--cache-ttl=30s` | ✅ toutes les 60s | ✅ |
+| Production (`--no-hot-reload`) | ∞ | ❌ | ❌ |
+| Cache permanent (`--cache-ttl=0`) | ∞ | ❌ | hérite |
+
+### Thread Safety
+
+- **`routerState`** : Protégé par `sync.RWMutex`. Les requêtes HTTP prennent un snapshot sous `RLock`, le watcher écrit sous `Lock`.
+- **`fileCache`** : Accès concurrent via `RLock` pour les lectures, `Lock` pour les écritures. Le champ `lastAccess` utilise `sync/atomic` pour un tracking sans contention.
+
+### Utilisation dans le Binder
+
+```hcl
+HTTP 0.0.0.0:8080
+    # Cache de 10 minutes
+    ROUTER / "./pages" @[cacheTtl="10m"]
+    
+    # Cache permanent (idéal pour du contenu statique)
+    ROUTER /docs "./documentation" @[cacheTtl="0"]
+END HTTP
+```

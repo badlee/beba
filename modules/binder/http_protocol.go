@@ -856,6 +856,12 @@ func NewHTTPDirective(config *DirectiveConfig) *HTTPDirective {
 							}
 							cfg.Settings["exclude"] = r.Args.Get("exclude")
 						}
+						if r.Args.Has("cacheTtl") {
+							if d, parseErr := time.ParseDuration(r.Args.Get("cacheTtl")); parseErr == nil {
+								cfg.CacheTTL = d
+							}
+							cfg.Settings["cacheTtl"] = r.Args.Get("cacheTtl")
+						}
 						h, err := httpserver.FsRouter(cfg)
 						if err != nil {
 							args = append(args, timeoutMiddleware(func(c fiber.Ctx) error {

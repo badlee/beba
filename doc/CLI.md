@@ -27,6 +27,7 @@ Serving virtual hosts from a directory:
 | `--env-file` | | `.env` | Env files (.env/.conf), comma-separated |
 | `--env-prefix`| | `APP_`  | Environment variable prefix |
 | `--hot-reload`| `-H` | `true` | Enable hot-reload |
+| `--cache-ttl`| | `5m` | File cache TTL for FsRouter (duration string, e.g. `30s`, `10m`, `0` = permanent) |
 | `--port` | `-p` | `8080` | Port to use |
 | `--address` | `-a` | `0.0.0.0` | Address to use |
 | `--socket` | `-s` | | Listen on a Unix domain socket (internal use/advanced) |

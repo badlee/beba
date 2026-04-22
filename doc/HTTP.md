@@ -163,3 +163,53 @@ Modifie l'URL en interne (`REWRITE`) ou renvoie un code 3xx au client (`REDIRECT
 REWRITE "/v1/(.*)" "/v2/$1"
 REDIRECT 301 "/old" "/new" c.Get("User-Agent").includes("Mobile")
 ```
+
+---
+
+## 🔄 FsRouter Hot-Reload & File Cache
+
+The FsRouter includes built-in **hot-reload** and an **intelligent file cache** to optimize development speed and production performance.
+
+### Hot-Reload (Development)
+
+When `--hot-reload` is active (default), the FsRouter watches the pages directory via `fsnotify`:
+
+| Event | Action |
+|-------|--------|
+| **File created** (`.html`, `.js`) | Automatic route registration (rescan with 150ms debounce) |
+| **File deleted/renamed** | Automatic route removal (rescan) |
+| **File modified** | Cache invalidation only (no rescan, instant content refresh) |
+| **Directory created** | Added to watcher automatically |
+
+### Intelligent File Cache
+
+All template and JS files are cached in memory with TTL-based expiration:
+
+| Mode | TTL | Cleanup | Watcher |
+|------|-----|---------|---------|
+| `--hot-reload` (default) | 5m | ✅ every 60s | ✅ |
+| `--hot-reload --cache-ttl=30s` | 30s | ✅ every 60s | ✅ |
+| `--no-hot-reload` (production) | ∞ | ❌ | ❌ |
+| `--cache-ttl=0` | ∞ | ❌ | inherits |
+| `ROUTER @[cacheTtl="10m"]` | 10m | ✅ every 60s | inherits |
+
+### Per-Route Cache Control
+
+Use the `cacheTtl` argument in the `ROUTER` directive to override the global `--cache-ttl`:
+
+```hcl
+HTTP 0.0.0.0:8080
+    # 10-minute cache for this router
+    ROUTER / "./pages" @[cacheTtl="10m"]
+    
+    # Permanent cache (no cleanup goroutine)
+    ROUTER /static "./static-pages" @[cacheTtl="0"]
+END HTTP
+```
+
+### CLI Flag
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--cache-ttl` | `5m` | Duration string for file cache TTL. `0` or negative = permanent cache. |
+

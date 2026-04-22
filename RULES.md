@@ -42,6 +42,11 @@ Ce document définit les règles de codage et les standards à suivre pour le pr
 4. **Layouts**: `_layout.html` or `_layout.js` files are recursive and must use the `content` variable (Mustache `{{content}}` or JS global `content`).
 5. **Partials**: Use `.partial.` in the filename (e.g., `info.partial.html`) to bypass layout wrapping for AJAX or API fragments.
 6. **Context**: Use `c.Locals("_fsrouter_params")` and `c.Locals("_fsrouter_catchall")` to access routing variables if needed natively.
+7. **Hot-Reload**: Route changes (file create/delete/rename) trigger an automatic rescan with 150ms debounce. Content modifications only invalidate the file cache. Controlled by `--hot-reload` (default: `true`).
+8. **File Cache**: All template/JS files are lazy-loaded into an in-memory TTL cache (`fileCache`). Use `--cache-ttl` to control expiration (default: `5m`). TTL ≤ 0 means permanent cache (no cleanup goroutine).
+9. **Per-Router Cache**: Use the `cacheTtl` argument on the `ROUTER` directive (e.g., `ROUTER / ./pages @[cacheTtl="10m"]`) to override the global `--cache-ttl` per route group.
+10. **Production**: In production (`--no-hot-reload`), disable the watcher and use permanent cache for maximum performance. No `fsnotify` overhead, no cleanup goroutine.
+11. **Thread Safety**: The `routerState` uses `sync.RWMutex`. The watcher writes under exclusive lock; request handlers read under shared lock via `snapshot()`. The `fileCache` uses atomic `lastAccess` tracking for minimal contention.
 
 ### Virtual Hosts (Vhost)
 

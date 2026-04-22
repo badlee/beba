@@ -92,11 +92,15 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"beba/plugins/config"
 	"beba/processor"
 
 	"github.com/dop251/goja"
+	"github.com/fsnotify/fsnotify"
 	"github.com/go-co-op/gocron/v2"
 	"github.com/gofiber/fiber/v3"
 )
@@ -166,6 +170,13 @@ type RouterConfig struct {
 	// App est l'instance HTTP parente. Requis pour enregistrer les handlers
 	// de fermeture (_close.js) via app.RegisterOnShutdown.
 	App *HTTP
+
+	// CacheTTL est la durée de vie des fichiers en cache mémoire.
+	// Si != 0, overrides AppConfig.CacheTTL.
+	// Si <= 0 (explicitement), le cache est permanent (pas de goroutine de cleanup).
+	// Si 0 (zero-value), utilise AppConfig.CacheTTL.
+	// Défaut : 0 (hérite de AppConfig.CacheTTL, qui vaut 5m par défaut)
+	CacheTTL time.Duration
 }
 
 func (r *RouterConfig) normalize() {
@@ -262,6 +273,236 @@ type routeEntry struct {
 var knownHTTPMethods = map[string]bool{
 	"GET": true, "POST": true, "PUT": true, "DELETE": true,
 	"PATCH": true, "HEAD": true, "OPTIONS": true, "ANY": true,
+}
+
+// ==================== FILE CACHE ====================
+
+// cacheEntry stocke le contenu d'un fichier avec son timestamp de dernier accès.
+type cacheEntry struct {
+	content    []byte
+	lastAccess int64 // UnixNano, mis à jour via atomic
+}
+
+// fileCache est un cache de fichiers avec expiration automatique.
+// Les fichiers sont chargés à la première requête (lazy-load) et
+// libérés après une période d'inactivité (TTL).
+//
+// TTL > 0 : les entrées expirent après TTL d'inactivité ; un goroutine
+// de nettoyage tourne en arrière-plan.
+// TTL <= 0 : cache permanent, pas de goroutine de nettoyage.
+type fileCache struct {
+	mu   sync.RWMutex
+	data map[string]*cacheEntry
+	ttl  time.Duration
+	done chan struct{}
+}
+
+const defaultCacheTTL = 5 * time.Minute
+const cacheCleanupInterval = 1 * time.Minute
+
+// newFileCache crée un cache avec TTL.
+// Si ttl <= 0, le cache est permanent (pas de goroutine de cleanup).
+func newFileCache(ttl time.Duration) *fileCache {
+	fc := &fileCache{
+		data: make(map[string]*cacheEntry),
+		ttl:  ttl,
+		done: make(chan struct{}),
+	}
+	if ttl > 0 { // TTL <= 0 → cache permanent, pas de goroutine de nettoyage
+		go fc.cleanup()
+	}
+	return fc
+}
+
+// ReadFile lit un fichier depuis le cache ou le disque.
+// Mise en cache à la première lecture, rafraîchit le lastAccess à chaque accès.
+func (fc *fileCache) ReadFile(path string) ([]byte, error) {
+	fc.mu.RLock()
+	if entry, ok := fc.data[path]; ok {
+		atomic.StoreInt64(&entry.lastAccess, time.Now().UnixNano())
+		fc.mu.RUnlock()
+		return entry.content, nil
+	}
+	fc.mu.RUnlock()
+
+	// Cache miss — lire depuis le disque
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	fc.mu.Lock()
+	// Double-check sous write lock (un autre goroutine a pu le charger)
+	if entry, ok := fc.data[path]; ok {
+		atomic.StoreInt64(&entry.lastAccess, time.Now().UnixNano())
+		fc.mu.Unlock()
+		return entry.content, nil
+	}
+	fc.data[path] = &cacheEntry{
+		content:    content,
+		lastAccess: time.Now().UnixNano(),
+	}
+	fc.mu.Unlock()
+
+	return content, nil
+}
+
+// Invalidate supprime un fichier du cache (appelé par le watcher).
+func (fc *fileCache) Invalidate(path string) {
+	fc.mu.Lock()
+	delete(fc.data, path)
+	fc.mu.Unlock()
+}
+
+// cleanup supprime périodiquement les entrées expirées.
+func (fc *fileCache) cleanup() {
+	ticker := time.NewTicker(cacheCleanupInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-fc.done:
+			return
+		case <-ticker.C:
+			now := time.Now().UnixNano()
+			ttlNano := fc.ttl.Nanoseconds()
+			fc.mu.Lock()
+			for path, entry := range fc.data {
+				if now-atomic.LoadInt64(&entry.lastAccess) > ttlNano {
+					delete(fc.data, path)
+				}
+			}
+			fc.mu.Unlock()
+		}
+	}
+}
+
+// Close arrête le goroutine de nettoyage.
+func (fc *fileCache) Close() {
+	select {
+	case <-fc.done:
+	default:
+		close(fc.done)
+	}
+}
+
+// ==================== ROUTER STATE ====================
+
+// routerState encapsule l'état du routeur FsRouter de manière thread-safe.
+// Le handler principal lit sous RLock, le watcher écrit sous Lock lors d'un rescan.
+type routerState struct {
+	mu               sync.RWMutex
+	routes           []routeEntry
+	middlewareMap    map[string]string
+	notFoundHandlers map[string]string
+	errorHandlers    map[string]map[string]string
+	layoutMap        map[string][]string
+	cache            *fileCache
+}
+
+// rescan re-scanne le répertoire et met à jour l'état de manière atomique.
+func (s *routerState) rescan(cfg RouterConfig) {
+	layoutMap := make(map[string][]string)
+	routes, mwMap, nfHandlers, errHandlers, _, _, _ := scanDirectory(
+		cfg.Root, cfg.Root, layoutMap, cfg,
+	)
+	sort.SliceStable(routes, func(i, j int) bool {
+		return routePriority(routes[i]) > routePriority(routes[j])
+	})
+
+	s.mu.Lock()
+	s.routes = routes
+	s.middlewareMap = mwMap
+	s.notFoundHandlers = nfHandlers
+	s.errorHandlers = errHandlers
+	s.layoutMap = layoutMap
+	s.mu.Unlock()
+}
+
+// snapshot retourne une copie locale de l'état courant (sous RLock).
+func (s *routerState) snapshot() ([]routeEntry, map[string]string, map[string]string, map[string]map[string]string, map[string][]string) {
+	s.mu.RLock()
+	routes := s.routes
+	mw := s.middlewareMap
+	nf := s.notFoundHandlers
+	eh := s.errorHandlers
+	lm := s.layoutMap
+	s.mu.RUnlock()
+	return routes, mw, nf, eh, lm
+}
+
+// ==================== ROUTE WATCHER ====================
+
+// startRouteWatcher démarre un watcher fsnotify sur le répertoire root
+// et déclenche un rescan lors des créations/suppressions de fichiers de route.
+// Les modifications de contenu invalident uniquement le cache (pas de rescan).
+func startRouteWatcher(root string, state *routerState, cfg RouterConfig) (*fsnotify.Watcher, error) {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return nil, err
+	}
+
+	// Ajouter récursivement tous les sous-répertoires
+	_ = filepath.WalkDir(root, func(path string, d fsIO.DirEntry, err error) error {
+		if err != nil || !d.IsDir() {
+			return nil
+		}
+		relPath, _ := filepath.Rel(root, path)
+		if relPath != "." && isExcluded(relPath, cfg.Exclude) {
+			return filepath.SkipDir
+		}
+		_ = watcher.Add(path)
+		return nil
+	})
+
+	go func() {
+		var debounce *time.Timer
+		const debounceDuration = 150 * time.Millisecond
+		for {
+			select {
+			case event, ok := <-watcher.Events:
+				if !ok {
+					return
+				}
+				ext := filepath.Ext(event.Name)
+				isRouteFile := ext == cfg.TemplateExt || ext == ".js"
+
+				// Invalider le cache pour les fichiers modifiés/supprimés
+				if event.Has(fsnotify.Write) || event.Has(fsnotify.Remove) {
+					state.cache.Invalidate(event.Name)
+				}
+
+				// Ajouter les nouveaux répertoires au watcher
+				if event.Has(fsnotify.Create) {
+					if info, statErr := os.Stat(event.Name); statErr == nil && info.IsDir() {
+						_ = watcher.Add(event.Name)
+					}
+				}
+
+				// Re-scanner sur création/suppression/renommage de fichiers de route
+				// (une simple modification de contenu invalide uniquement le cache)
+				if isRouteFile && (event.Has(fsnotify.Create) ||
+					event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename)) {
+					if debounce != nil {
+						debounce.Stop()
+					}
+					debounce = time.AfterFunc(debounceDuration, func() {
+						if !cfg.AppConfig.Silent {
+							fmt.Printf("FsRouter: rescan (%s %s)\n",
+								event.Op, filepath.Base(event.Name))
+						}
+						state.rescan(cfg)
+					})
+				}
+
+			case _, ok := <-watcher.Errors:
+				if !ok {
+					return
+				}
+			}
+		}
+	}()
+
+	return watcher, nil
 }
 
 // ==================== SCANNER ====================
@@ -367,9 +608,53 @@ func FsRouter(cfgs ...RouterConfig) (fiber.Handler, error) {
 		})
 	}
 
+	// ==================== CACHE + STATE + WATCHER ====================
+
+	// Résoudre le TTL du cache
+	// TTL <= 0 → cache permanent (pas de cleanup goroutine)
+	ttl := defaultCacheTTL
+	if cfg.AppConfig != nil && cfg.AppConfig.CacheTTL != 0 {
+		ttl = cfg.AppConfig.CacheTTL // flag --cache-ttl
+	}
+	if cfg.CacheTTL != 0 {
+		ttl = cfg.CacheTTL // override par directive ROUTER
+	}
+	// En mode production (hot-reload désactivé), forcer cache permanent
+	if cfg.AppConfig != nil && !cfg.AppConfig.HotReload {
+		ttl = 0
+	}
+
+	cache := newFileCache(ttl)
+	state := &routerState{
+		routes:           routes,
+		middlewareMap:     middlewareMap,
+		notFoundHandlers: notFoundHandlers,
+		errorHandlers:    errorHandlers,
+		layoutMap:        layoutMap,
+		cache:            cache,
+	}
+
+	// Démarrer le watcher si hot-reload activé
+	if cfg.AppConfig != nil && cfg.AppConfig.HotReload {
+		routeWatcher, watchErr := startRouteWatcher(cfg.Root, state, cfg)
+		if watchErr != nil {
+			if !cfg.AppConfig.Silent {
+				fmt.Printf("FsRouter: watcher error: %v (continuing without hot-reload)\n", watchErr)
+			}
+		} else if routeWatcher != nil && cfg.App != nil {
+			cfg.App.RegisterOnShutdown("fsrouter-watcher", func() error {
+				cache.Close()
+				return routeWatcher.Close()
+			})
+		}
+	}
+
 	// Le handler retourné est un middleware Fiber qui redirige vers les routes scannées.
 	// On l'utilise comme dispatcher — il est enregistré via app.Use() dans main.
 	return func(c fiber.Ctx) error {
+		// Injecter le cache dans Locals pour ProcessFile et les fonctions internes
+		c.Locals("_fsrouter_cache", state.cache)
+
 		path := c.Path()
 		method := c.Method()
 
@@ -377,6 +662,9 @@ func FsRouter(cfgs ...RouterConfig) (fiber.Handler, error) {
 		if !cfg.StrictSlash && len(path) > 1 && strings.HasSuffix(path, "/") {
 			path = strings.TrimSuffix(path, "/")
 		}
+
+		// Prendre un snapshot de l'état courant (sous RLock)
+		routes, middlewareMap, notFoundHandlers, errorHandlers, layoutMap := state.snapshot()
 
 		// Chercher la route correspondante
 		var pathMatched bool
@@ -394,33 +682,33 @@ func FsRouter(cfgs ...RouterConfig) (fiber.Handler, error) {
 			}
 
 			// Appliquer les middlewares en cascade (du plus haut au plus profond)
-			mwHandlers := buildMiddlewareChain(r.middlewares, middlewareMap, cfg)
+			mwHandlers := buildMiddlewareChain(r.middlewares, middlewareMap, cfg, state.cache)
 
 			// Handler final
-			finalHandler := buildRouteHandler(r, cfg)
+			finalHandler := buildRouteHandler(r, cfg, state.cache)
 
 			// Exécuter la chaîne ; les erreurs sont interceptées par handleHTTPError
 			err := runChain(c, append(mwHandlers, finalHandler))
 			if err != nil {
-				return handleHTTPError(c, err, path, errorHandlers, layoutMap, cfg)
+				return handleHTTPError(c, err, path, errorHandlers, layoutMap, cfg, state.cache)
 			}
 			return nil
 		}
 
 		if pathMatched {
 			// Le chemin a été trouvé, mais pas la bonne méthode HTTP => 405
-			return handleHTTPError(c, fiber.ErrMethodNotAllowed, path, errorHandlers, layoutMap, cfg)
+			return handleHTTPError(c, fiber.ErrMethodNotAllowed, path, errorHandlers, layoutMap, cfg, state.cache)
 		}
 
 		// 404 — chercher un handler 404 dans la hiérarchie
-		if h := find404Handler(path, notFoundHandlers, layoutMap, cfg); h != nil {
+		if h := find404Handler(path, notFoundHandlers, layoutMap, cfg, state.cache); h != nil {
 			return h(c)
 		}
 		if cfg.NotFound != nil {
 			return cfg.NotFound(c)
 		}
 		// Pas de route trouvée → erreur 404 via le système d'error handlers
-		return handleHTTPError(c, fiber.ErrNotFound, path, errorHandlers, layoutMap, cfg)
+		return handleHTTPError(c, fiber.ErrNotFound, path, errorHandlers, layoutMap, cfg, state.cache)
 	}, nil
 }
 
@@ -830,7 +1118,7 @@ func matchRoute(r *routeEntry, method, path string, c fiber.Ctx) (bool, bool) {
 // ==================== HANDLER BUILDER ====================
 
 // buildRouteHandler construit le handler Fiber pour une routeEntry.
-func buildRouteHandler(r *routeEntry, cfg RouterConfig) fiber.Handler {
+func buildRouteHandler(r *routeEntry, cfg RouterConfig, cache *fileCache) fiber.Handler {
 	return func(c fiber.Ctx) error {
 		// Exposer les params dynamiques dans le contexte Fiber
 		if params, ok := c.Locals("_fsrouter_params").(map[string]string); ok {
@@ -840,13 +1128,13 @@ func buildRouteHandler(r *routeEntry, cfg RouterConfig) fiber.Handler {
 		}
 
 		if r.isExport {
-			return handleJSExport(c, r.filePath, r.exportKey, r.isPartial, r.layouts, cfg)
+			return handleJSExport(c, r.filePath, r.exportKey, r.isPartial, r.layouts, cfg, cache)
 		}
 		if r.isTemplate {
-			return handleTemplate(c, r.filePath, r.isPartial, r.layouts, cfg)
+			return handleTemplate(c, r.filePath, r.isPartial, r.layouts, cfg, cache)
 		}
 		if r.isJS {
-			return handleJS(c, r.filePath, r.isPartial, r.layouts, cfg)
+			return handleJS(c, r.filePath, r.isPartial, r.layouts, cfg, cache)
 		}
 		if r.isStatic {
 			return c.SendFile(r.filePath)
@@ -857,7 +1145,7 @@ func buildRouteHandler(r *routeEntry, cfg RouterConfig) fiber.Handler {
 
 // handleTemplate traite un fichier template via processor.ProcessFile.
 // handleTemplate exécute un template HTML avec injection de context et params.
-func handleTemplate(c fiber.Ctx, filePath string, isPartial bool, layouts []string, cfg RouterConfig) error {
+func handleTemplate(c fiber.Ctx, filePath string, isPartial bool, layouts []string, cfg RouterConfig, cache ...*fileCache) error {
 	res, err := processor.ProcessFile(filePath, c, cfg.AppConfig, cfg.Settings)
 	if err != nil {
 		if cfg.ErrorHandler != nil {
@@ -876,7 +1164,9 @@ func handleTemplate(c fiber.Ctx, filePath string, isPartial bool, layouts []stri
 			case cfg.TemplateExt:
 				res, err = processor.ProcessFile(lPath, c, cfg.AppConfig, cfg.Settings)
 			case ".js":
-				res, err = runAndCaptureJS(c, lPath, cfg)
+				if len(cache) > 0 && cache[0] != nil {
+					res, err = runAndCaptureJS(c, lPath, cfg, cache[0])
+				}
 			}
 			if err != nil {
 				return err
@@ -889,8 +1179,8 @@ func handleTemplate(c fiber.Ctx, filePath string, isPartial bool, layouts []stri
 }
 
 // handleJS traite un fichier .js via processor.New + RunString.
-func handleJS(c fiber.Ctx, filePath string, isPartial bool, layouts []string, cfg RouterConfig) error {
-	res, err := runAndCaptureJS(c, filePath, cfg)
+func handleJS(c fiber.Ctx, filePath string, isPartial bool, layouts []string, cfg RouterConfig, cache *fileCache) error {
+	res, err := runAndCaptureJS(c, filePath, cfg, cache)
 	if err != nil {
 		return err
 	}
@@ -903,7 +1193,7 @@ func handleJS(c fiber.Ctx, filePath string, isPartial bool, layouts []string, cf
 			if ext == cfg.TemplateExt {
 				res, err = processor.ProcessFile(lPath, c, cfg.AppConfig, cfg.Settings)
 			} else if ext == ".js" {
-				res, err = runAndCaptureJS(c, lPath, cfg)
+				res, err = runAndCaptureJS(c, lPath, cfg, cache)
 			}
 			if err != nil {
 				return err
@@ -923,8 +1213,8 @@ func handleJS(c fiber.Ctx, filePath string, isPartial bool, layouts []string, cf
 }
 
 // runAndCaptureJS exécute un script JS et retourne sa sortie (print ou return).
-func runAndCaptureJS(c fiber.Ctx, filePath string, cfg RouterConfig) (string, error) {
-	content, err := os.ReadFile(filePath)
+func runAndCaptureJS(c fiber.Ctx, filePath string, cfg RouterConfig, cache *fileCache) (string, error) {
+	content, err := cache.ReadFile(filePath)
 	if err != nil {
 		if cfg.ErrorHandler != nil {
 			_ = cfg.ErrorHandler(c, err)
@@ -994,12 +1284,12 @@ func runAndCaptureJS(c fiber.Ctx, filePath string, cfg RouterConfig) (string, er
 // ==================== MIDDLEWARE ====================
 
 // buildMiddlewareChain construit la chaîne de handlers pour les _middleware.js.
-func buildMiddlewareChain(mwPaths []string, _ /*middlewareMap*/ map[string]string, cfg RouterConfig) []fiber.Handler {
+func buildMiddlewareChain(mwPaths []string, _ /*middlewareMap*/ map[string]string, cfg RouterConfig, cache *fileCache) []fiber.Handler {
 	var handlers []fiber.Handler
 	for _, mwPath := range mwPaths {
 		p := mwPath // capture
 		handlers = append(handlers, func(c fiber.Ctx) error {
-			return runMiddlewareJS(c, p, cfg)
+			return runMiddlewareJS(c, p, cfg, cache)
 		})
 	}
 	return handlers
@@ -1010,8 +1300,8 @@ func buildMiddlewareChain(mwPaths []string, _ /*middlewareMap*/ map[string]strin
 //   - Appeler next() pour passer au handler suivant
 //   - Retourner sans appeler next() pour court-circuiter
 //   - Lancer une erreur / utiliser throwError()
-func runMiddlewareJS(c fiber.Ctx, filePath string, cfg RouterConfig) error {
-	content, err := os.ReadFile(filePath)
+func runMiddlewareJS(c fiber.Ctx, filePath string, cfg RouterConfig, cache *fileCache) error {
+	content, err := cache.ReadFile(filePath)
 	if err != nil {
 		return c.Next() // middleware manquant → ignorer
 	}
@@ -1087,7 +1377,7 @@ func runChain(c fiber.Ctx, handlers []fiber.Handler) error {
 // ==================== 404 ====================
 
 // find404Handler cherche le handler 404 le plus proche dans la hiérarchie.
-func find404Handler(path string, notFoundHandlers map[string]string, layoutMap map[string][]string, cfg RouterConfig) fiber.Handler {
+func find404Handler(path string, notFoundHandlers map[string]string, layoutMap map[string][]string, cfg RouterConfig, cache *fileCache) fiber.Handler {
 	// Chercher du plus profond au plus superficiel
 	segments := strings.Split(strings.TrimPrefix(path, "/"), "/")
 	for depth := len(segments); depth >= 0; depth-- {
@@ -1103,9 +1393,9 @@ func find404Handler(path string, notFoundHandlers map[string]string, layoutMap m
 			return func(c fiber.Ctx) error {
 				c.Status(fiber.StatusNotFound)
 				if ext == cfg.TemplateExt {
-					return handleTemplate(c, fPath, false, layouts, cfg)
+					return handleTemplate(c, fPath, false, layouts, cfg, cache)
 				}
-				return handleJS(c, fPath, false, layouts, cfg)
+				return handleJS(c, fPath, false, layouts, cfg, cache)
 			}
 		}
 	}
@@ -1197,7 +1487,7 @@ func findErrorHandler(code int, reqPath string, errorHandlers map[string]map[str
 //
 //	errorCode    int    — code HTTP (ex: 404, 500)
 //	errorMessage string — message de l'erreur
-func handleHTTPError(c fiber.Ctx, err error, reqPath string, errorHandlers map[string]map[string]string, layoutMap map[string][]string, cfg RouterConfig) error {
+func handleHTTPError(c fiber.Ctx, err error, reqPath string, errorHandlers map[string]map[string]string, layoutMap map[string][]string, cfg RouterConfig, cache *fileCache) error {
 	code := fiber.StatusInternalServerError
 	msg := "Internal Server Error"
 	if e, ok := err.(*fiber.Error); ok {
@@ -1222,12 +1512,12 @@ func handleHTTPError(c fiber.Ctx, err error, reqPath string, errorHandlers map[s
 	layouts := collectLayouts(cfg.Root, filepath.Dir(fp), layoutMap)
 
 	if ext == cfg.TemplateExt {
-		return handleErrorTemplate(c, fp, code, msg, false, layouts, cfg)
+		return handleErrorTemplate(c, fp, code, msg, false, layouts, cfg, cache)
 	}
-	return handleErrorJS(c, fp, code, msg, false, layouts, cfg)
+	return handleErrorJS(c, fp, code, msg, false, layouts, cfg, cache)
 }
 
-func handleErrorTemplate(c fiber.Ctx, filePath string, code int, msg string, isPartial bool, layouts []string, cfg RouterConfig) error {
+func handleErrorTemplate(c fiber.Ctx, filePath string, code int, msg string, isPartial bool, layouts []string, cfg RouterConfig, cache ...*fileCache) error {
 	c.Locals("errorCode", code)
 	c.Locals("errorMessage", msg)
 
@@ -1249,7 +1539,9 @@ func handleErrorTemplate(c fiber.Ctx, filePath string, code int, msg string, isP
 			if ext == cfg.TemplateExt {
 				res, err = processor.ProcessFile(lPath, c, cfg.AppConfig, cfg.Settings)
 			} else if ext == ".js" {
-				res, err = runAndCaptureJS(c, lPath, cfg)
+				if len(cache) > 0 && cache[0] != nil {
+					res, err = runAndCaptureJS(c, lPath, cfg, cache[0])
+				}
 			}
 			if err != nil {
 				return err
@@ -1262,8 +1554,8 @@ func handleErrorTemplate(c fiber.Ctx, filePath string, code int, msg string, isP
 }
 
 // handleErrorJS exécute un handler JS d'erreur.
-func handleErrorJS(c fiber.Ctx, filePath string, code int, msg string, isPartial bool, layouts []string, cfg RouterConfig) error {
-	content, err := os.ReadFile(filePath)
+func handleErrorJS(c fiber.Ctx, filePath string, code int, msg string, isPartial bool, layouts []string, cfg RouterConfig, cache *fileCache) error {
+	content, err := cache.ReadFile(filePath)
 	if err != nil {
 		return c.SendString(fmt.Sprintf("Error %d: %s", code, msg))
 	}
@@ -1323,7 +1615,7 @@ func handleErrorJS(c fiber.Ctx, filePath string, code int, msg string, isPartial
 			if ext == cfg.TemplateExt {
 				res, err = processor.ProcessFile(lPath, c, cfg.AppConfig, cfg.Settings)
 			} else if ext == ".js" {
-				res, err = runAndCaptureJS(c, lPath, cfg)
+				res, err = runAndCaptureJS(c, lPath, cfg, cache)
 			}
 			if err != nil {
 				return err
@@ -1424,8 +1716,8 @@ func newProbeVM() *processor.Processor {
 }
 
 // handleJSExport exécute la fonction exportée sous la clé `method` dans module.exports.
-func handleJSExport(c fiber.Ctx, filePath, method string, isPartial bool, layouts []string, cfg RouterConfig) error {
-	res, err := runAndCaptureJSExport(c, filePath, method, cfg)
+func handleJSExport(c fiber.Ctx, filePath, method string, isPartial bool, layouts []string, cfg RouterConfig, cache *fileCache) error {
+	res, err := runAndCaptureJSExport(c, filePath, method, cfg, cache)
 	if err != nil {
 		return err
 	}
@@ -1439,7 +1731,7 @@ func handleJSExport(c fiber.Ctx, filePath, method string, isPartial bool, layout
 			case cfg.TemplateExt:
 				res, err = processor.ProcessFile(lPath, c, cfg.AppConfig, cfg.Settings)
 			case ".js":
-				res, err = runAndCaptureJS(c, lPath, cfg)
+				res, err = runAndCaptureJS(c, lPath, cfg, cache)
 			}
 			if err != nil {
 				return err
@@ -1456,8 +1748,8 @@ func handleJSExport(c fiber.Ctx, filePath, method string, isPartial bool, layout
 }
 
 // runAndCaptureJSExport exécute une méthode exportée et retourne sa sortie.
-func runAndCaptureJSExport(c fiber.Ctx, filePath, method string, cfg RouterConfig) (string, error) {
-	content, err := os.ReadFile(filePath)
+func runAndCaptureJSExport(c fiber.Ctx, filePath, method string, cfg RouterConfig, cache *fileCache) (string, error) {
+	content, err := cache.ReadFile(filePath)
 	if err != nil {
 		if cfg.ErrorHandler != nil {
 			_ = cfg.ErrorHandler(c, err)

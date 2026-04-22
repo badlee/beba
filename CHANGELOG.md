@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.4] - 2026-04-22
+
+### Added
+- **FsRouter Hot-Reload**: Real-time route reloading via `fsnotify` watcher. New files automatically register routes, deleted files remove them, and renamed files trigger a full rescan — all with a 150ms debounce to avoid thrashing.
+- **Intelligent File Cache**: TTL-based lazy-loading in-memory cache (`fileCache`) for `.js` and template files. Files are loaded on first request, served from memory on subsequent requests, and automatically evicted after inactivity. Eliminates redundant disk I/O in the request path.
+- **Cache TTL Control**: New `--cache-ttl` CLI flag (default: `5m`) controls how long cached files remain in memory. Set to `0` or negative for permanent caching (no cleanup goroutine).
+- **Per-Router Cache TTL**: New `cacheTtl` argument for the `ROUTER` directive in `.bind` files (e.g., `ROUTER / ./pages @[cacheTtl="10m"]`), allowing per-vhost or per-route cache tuning.
+- **Thread-Safe Route State**: `routerState` with `sync.RWMutex` ensures concurrent-safe access to the routing table. The watcher writes under exclusive lock; request handlers read under shared lock via `snapshot()`.
+- **Production Mode Optimization**: When `--hot-reload=false`, the file cache is permanent (no TTL expiration, no cleanup goroutine) and no `fsnotify` watcher is started, minimizing resource usage.
+- **ProcessFile Cache Integration**: `processor.ProcessFile` transparently reads from the FsRouter cache (via `c.Locals("_fsrouter_cache")` interface) when available, with fallback to `os.ReadFile` for standalone usage.
+
 ## [0.0.3] - 2026-04-22
 
 ### Added
