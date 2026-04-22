@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.5] - 2026-04-22
+
+### Added
+- **Connection Peeking Optimization**: Eliminated the 512-byte `Peek` with a 2-second timeout for non-multiplexed protocols (such as HTTP, MQTT) when they are the only protocol bound to a port. This drastically reduces connection latency for standard setups by using a direct accept loop instead of the generic peeking orchestrator.
+
+### Fixed
+- **FsRouter Path Resolution**: Fixed a bug where the `ROUTER` directive with a single argument (e.g., `ROUTER .`) was incorrectly parsing the directory as the URL path, resulting in 404 errors. `ROUTER .` now correctly mounts the current directory to the root URL `/`.
+
 ## [0.0.4] - 2026-04-22
 
 ### Added

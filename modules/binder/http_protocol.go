@@ -803,9 +803,13 @@ func NewHTTPDirective(config *DirectiveConfig) *HTTPDirective {
 				continue
 			}
 			if method == "ROUTER" {
+				dir := string(handlerCode)
+				if dir == "" {
+					dir = path
+					path = "/"
+				}
 				args := append([]any{path}, handlers...)
-				if !r.Inline && len(handlerCode) > 0 {
-					dir := string(handlerCode)
+				if !r.Inline && len(dir) > 0 {
 					if !filepath.IsAbs(dir) {
 						dir = filepath.Join(config.BaseDir, dir)
 					}

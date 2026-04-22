@@ -304,7 +304,12 @@ func (m *Manager) startGroup(group GroupConfig, registered []ProtocolRegistratio
 			}
 		}
 
-		go m.acceptLoop(ln, protocols, policyName)
+		needsPeek := strings.ToUpper(group.Directive) == "TCP"
+		if needsPeek {
+			go m.acceptLoop(ln, protocols, policyName)
+		} else {
+			go m.directAcceptLoop(ln, protocols, policyName)
+		}
 	}
 	return nil
 }
@@ -344,6 +349,40 @@ func (m *Manager) udpAcceptLoop(pc net.PacketConn, protocols []Directive, policy
 			}
 			log.Printf("Manager: No protocol matched for UDP packet from %s", remoteAddr)
 		}(packetData, addr)
+	}
+}
+
+func (m *Manager) directAcceptLoop(ln net.Listener, protocols []Directive, policyName string) {
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			if strings.Contains(err.Error(), "use of closed network connection") || errors.Is(err, net.ErrClosed) {
+				log.Printf("Manager: Protocol listener closed, exiting accept loop for policy %q", policyName)
+				return
+			}
+			log.Printf("Accept error: %v", err)
+			continue
+		}
+
+		// Check against Global/Default OR Protocol-specific Security Rules
+		log.Printf("Manager: Accepted connection from %s, checking security policy %q", conn.RemoteAddr(), policyName)
+		if !security.GetEngine().AllowConnection(conn, policyName) {
+			log.Printf("Manager: Connection from %s BLOCKED by policy %q", conn.RemoteAddr(), policyName)
+			conn.Close()
+			continue
+		}
+
+		log.Printf("Manager: Connection from %s ALLOWED, dispatching directly (no peek)", conn.RemoteAddr())
+		go func(c net.Conn) {
+			for _, p := range protocols {
+				if err := p.Handle(c); err != nil {
+					log.Printf("Directive %s handle error: %v", p.Name(), err)
+				}
+				return
+			}
+			log.Printf("Manager: No protocol for connection from %s, closing.", c.RemoteAddr())
+			c.Close()
+		}(conn)
 	}
 }
 

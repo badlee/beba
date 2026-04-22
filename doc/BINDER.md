@@ -509,6 +509,9 @@ Les autres options sont identiques à ceux de `STATIC` (`indexName`, `browse`, `
 
 **Exemples :**
 ```hcl
+# Syntaxe courte : Monte le dossier courant (.) sur la racine (/)
+ROUTER .
+
 # Cache fichier de 10 minutes (override du --cache-ttl global)
 ROUTER /app "./views" @[cacheTtl="10m"]
 
@@ -718,6 +721,9 @@ GET "/about" TEMPLATE "views/about.html" text/html
 ---
 
 Le système Binder permet à plusieurs protocoles d'écouter sur le même port en utilisant le "peeking" (inspection non-destructive des premiers octets de la connexion via `bufio.Peek`).
+
+> [!TIP]
+> **Optimisation de Peeking** : Si un seul protocole est défini sur un port donné (par exemple, un bloc `HTTP` pur sans autres protocoles), le moteur désactive intelligemment le peeking. La connexion est acceptée directement sans délai d'attente (timeout), ce qui améliore considérablement la latence et les performances.
 
 Cette approche garantit que les protocoles comme MQTT reçoivent l'intégralité du flux d'octets original, y compris les octets utilisés pour l'identification.
 

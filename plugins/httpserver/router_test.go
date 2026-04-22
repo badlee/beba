@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"beba/plugins/config"
 
@@ -1525,5 +1526,44 @@ func TestFsRouter_Partial(t *testing.T) {
 	_, body = do(t, router, "GET", "/partial")
 	if body != "PARTIAL" {
 		t.Errorf("expected unwrapped partial, got %q", body)
+	}
+}
+
+// ==================== HOT-RELOAD ====================
+
+func TestFsRouter_HotReload_EmptyToIndex(t *testing.T) {
+	dir := t.TempDir()
+
+	app := fiber.New()
+	h, err := FsRouter(RouterConfig{
+		Root:        dir,
+		TemplateExt: ".html",
+		IndexFile:   "index",
+		AppConfig:   &config.AppConfig{NoHtmx: true, HotReload: true, Silent: true},
+	})
+	if err != nil {
+		t.Fatalf("FsRouter failed: %v", err)
+	}
+	app.Use(h)
+
+	// 1. Répertoire vide → 404
+	code, _ := do(t, app, "GET", "/")
+	if code != http.StatusNotFound {
+		t.Errorf("expected 404 for empty dir, got %d", code)
+	}
+
+	// 2. Créer index.html
+	writeFile(t, dir, "index.html", `Hello Hot-Reload`)
+
+	// 3. Attendre le debounce (150ms) + marge
+	time.Sleep(500 * time.Millisecond)
+
+	// 4. La route doit maintenant être disponible
+	code, body := do(t, app, "GET", "/")
+	if code != http.StatusOK {
+		t.Errorf("expected 200 after hot-reload, got %d", code)
+	}
+	if !strings.Contains(body, "Hello Hot-Reload") {
+		t.Errorf("expected 'Hello Hot-Reload', got %q", body)
 	}
 }
