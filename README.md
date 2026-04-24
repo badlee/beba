@@ -1,164 +1,165 @@
 # Beba – 0 SDK. 0 Framework. 0 Plugin.
 
-**Beba** est un serveur hyper-média backend "all-in-one" distribué sous la forme d'un unique binaire auto-contenu. Aucune dépendance externe. Aucun runtime à installer. Aucune chaîne de build.
+**Beba** est un serveur backend "all-in-one" distribué sous la forme d'un unique binaire auto-contenu.
 
 ```bash
 ./beba
-# Votre backend est en ligne. Persistant. Stable.
+# Votre application tourne. Elle continuera de tourner.
 ```
 
 > *Beba. La seule dépendance, c'est Beba.*
 
 ---
 
-## La dette technique, vous la connaissez.
+## Pour les non-développeurs (chefs de projet, décideurs)
 
-Un projet abandonné 18 mois avec une stack classique (Next.js, React, Node.js) :
+### Ce que vous devez comprendre
 
-- `npm install` → conflits de dépendances
-- `npm audit` → vulnérabilités critiques
-- La moitié des tests ne passent plus
-- Le framework a changé d'API deux fois
+Avec une stack logicielle classique, votre application repose sur une pyramide de dépendances :
+
+```
+Votre application
+    ↓
+Framework (Next.js, React, Laravel...)
+    ↓
+Langage (Node.js, Python, PHP...)
+    ↓
+Package manager (npm, pip, composer...)
+    ↓
+Centaines de bibliothèques tierces
+    ↓
+Système d'exploitation
+```
+
+**Chaque couche est une facture potentielle :**
+- Mise à jour de sécurité obligatoire
+- Migration de version majeure (payante en temps de développement)
+- Obsolescence programmée (Node.js 16 n'est plus supporté)
+- Vulnérabilités dans une bibliothèque tierce que vous n'avez jamais installée volontairement
+
+**Avec Beba :**
+
+```
+Votre application
+    ↓
+Beba (un seul binaire)
+    ↓
+Système d'exploitation
+```
+
+**C'est tout.**
+
+### Pourquoi vous n'aurez pas de surprises
+
+| Scénario | Stack classique | Beba |
+|----------|-----------------|------|
+| **Votre application fonctionne. Vous ne voulez rien changer.** | Vous devez quand même mettre à jour pour des raisons de sécurité ou de compatibilité. Coût : jours de développement. | Vous ne changez rien. Beba continue de fonctionner. Coût : zéro. |
+| **Vous revenez sur un projet après 2 ans d'arrêt.** | Probablement cassé. Il faut tout remettre à jour. Coût : semaines de travail. | `./beba` → ça marche. Coût : zéro. |
+| **Une vulnérabilité est découverte dans une bibliothèque.** | Vous devez identifier laquelle, mettre à jour, tester. Coût : imprévisible. | Pas de bibliothèques tierces. Coût : zéro. |
+| **Vous changez d'hébergeur ou de serveur.** | Reinstaller tout l'environnement (Node.js, npm, etc.). Coût : plusieurs heures. | Copier le binaire. Coût : 2 minutes. |
+
+### Ce que vous économisez
+
+- **Pas d'architecte DevOps** pour gérer la chaîne de build
+- **Pas de veille technologique** pour suivre les évolutions de frameworks
+- **Pas de migrations forcées** tous les 18 mois
+- **Pas de "security patch"** qui casse votre application
+- **Pas de coût caché** dans les dépendances
+
+**Beba est livré sous licence Beba License. Vous l'utilisez. Il tourne. Point.**
+
+---
+
+## Pour les développeurs
+
+### La dette technique, vous la connaissez.
+
+Un projet abandonné 18 mois avec une stack classique :
+
+```bash
+git pull
+npm install  # ERESOLVE unable to resolve dependency tree
+npm audit    # 12 vulnerabilities (4 critical)
+npm run build  # TypeScript errors, deprecated APIs
+# 3 jours plus tard, ça ne tourne toujours pas.
+```
 
 Un projet Beba abandonné 18 mois :
 
 ```bash
 ./beba
-# Tout fonctionne. Rien n'a cassé.
+# 200 OK. Tout fonctionne.
 ```
 
-**Pourquoi ?** Parce que Beba n'a **aucune dépendance externe** :
+**Pourquoi ?** Beba n'a **aucune dépendance externe**.
 
-| Problème classique | Solution Beba |
-|--------------------|---------------|
-| `node_modules` (500 MB, 35 000 fichiers) | Un seul binaire (50-70 MB) |
-| `package.json` à maintenir | Pas de fichier de dépendances |
-| Conflits `ERESOLVE` | Impossible |
-| Vulnérabilités dans les packages tiers | Pas de packages tiers |
-| Mise à jour forcée du runtime (Node.js) | Le binaire contient tout |
-| API framework qui change (Next.js App Router) | L'API est le système lui-même |
-| SDK clients qui évoluent (Stripe, SendGrid...) | Appels HTTP natifs, pas de SDK |
+| Métrique | Stack classique (Next.js/Node.js) | Beba |
+|----------|----------------------------------|------|
+| Fichiers dans `node_modules` | 35 000+ | 0 |
+| Taille des dépendances | 500 MB - 2 GB | 0 |
+| Fichiers de configuration | 8-15 | 0-1 |
+| `package.json` à maintenir | Oui | Non |
+| Vulnérabilités tierces | Oui | Non |
+| Runtime externe requis | Node.js | Non |
+| API framework sujette à changement | Oui (Next.js App Router) | Non (stable par conception) |
 
----
+### Ce que vous n'aurez jamais à faire
 
-## Ce que vous n'aurez jamais
-
-| **Vous n'aurez pas à...** | **Parce que...** |
-|---------------------------|------------------|
-| Installer Node.js, Python, Ruby, PHP | Le binaire est autonome. |
-| Gérer un `package.json` | Il n'y a aucune dépendance à lister. |
-| Résoudre des conflits de versions | Il n'y a qu'une seule version : la vôtre. |
-| Attendre `npm install` | Rien à installer. |
+| Tâche | Pourquoi vous ne la ferez jamais |
+|-------|----------------------------------|
+| `npm install` | Rien à installer. |
+| Résoudre un conflit `ERESOLVE` | Pas de packages. |
 | Configurer Webpack, Vite, esbuild | Pas de bundler. |
-| Écrire `useEffect` pour appeler votre API | Le rendu est serveur, prêt à l'emploi. |
+| Écrire `useEffect` pour appeler votre API | Rendu serveur natif. |
 | Maintenir la compatibilité entre SDKs | Pas de SDK. |
-| Migrer de `pages/` vers `app/` | Le routage par fichiers est stable et documenté. |
-| Subir une dépréciation d'API majeure | L'API, c'est Beba. Vous contrôlez sa mise à jour. |
-| Scanner 500 packages pour une CVE | Pas de packages, pas de CVEs tierces. |
+| Scanner 500 packages pour une CVE | Pas de packages. |
+| Migrer de `pages/` vers `app/` | Routage par fichiers stable. |
+| Gérer plusieurs versions de Node.js | Pas de runtime externe. |
+
+### Le prix de la liberté
+
+Beba vous demande une seule chose : **garder la bonne version de Beba**.
+
+- Pas de mise à jour forcée
+- Pas de compatibility breaking imposée
+- Vous contrôlez quand vous évoluez
+
+Si votre application n'a pas besoin de nouvelles fonctionnalités, vous n'avez aucune raison de mettre à jour Beba.
+
+### Ce que vous gardez
+
+| Élément | Standard | Portable sans Beba ? |
+|---------|----------|---------------------|
+| Données | SQLite / PostgreSQL | Oui (fichier .db) |
+| Templates | HTML + Mustache | Oui |
+| Routes | Fichiers dans dossiers | Oui (structure simple) |
+| Scripts | JavaScript standard | Oui |
+
+**Beba ne vous enferme pas. Si vous partez, vos données et votre logique repartent avec vous.**
 
 ---
 
-## Une seule dépendance
+## Ce que Beba fait (techniquement)
 
-Voici tout ce dont vous avez besoin pour faire tourner un backend complet :
+Beba est un binaire Go (50-70 MB) qui contient **tout** :
 
-```bash
-# Étape 1 : Obtenir Beba
-git clone https://github.com/badlee/beba.git
-cd beba
-go build -o beba .
-
-# Étape 2 : Lancer
-./beba
-
-# Étape 3 : C'est fini.
-```
-
-**Dès le premier lancement, sans aucun fichier de configuration :**
-
-- Base de données SQLite persistante (`./.data/beba.db`)
-- API REST automatique (CRUD) sur `/api`
-- Interface d'administration (`/_admin`) (HTMX + SSE)
-- Hub temps-réel : SSE, WebSocket, MQTT, Socket.IO
-- Broker MQTT sur port 1883
-- Routage par fichiers (FsRouter)
-- JavaScript côté serveur (`<?js ?>`, `<script server>`)
-
-**Zéro configuration. Zéro dépendance. Zéro surprise dans 2 ans.**
-
----
-
-## Maintenabilité dans le temps
-
-| Scénario | Stack classique | Beba |
-|----------|-----------------|------|
-| **Projet abandonné 2 ans** | `npm install` échoue, `next build` cassé, runtime obsolète. | `./beba` → fonctionne immédiatement. |
-| **Changement de poste** | `git clone` + `npm install` (200 MB, 3 min, erreurs potentielles). | `git clone` + `go build` (60 MB, 10 secondes). |
-| **Mise à jour OS** | Node.js peut ne plus être compatible. | Le binaire contient tout. Il tourne partout. |
-| **Vulnérabilité critique** | Scanner 500 packages, espérer un correctif, prier. | Rien. Pas de dépendances. |
-| **Passation à un autre développeur** | Expliquer la stack, les scripts, les versions. | `./beba`. Il comprend en 30 secondes. |
-
----
-
-## Pourquoi c'est possible
-
-Beba n'est pas un wrapper. Beba **est** l'outil. Chaque fonctionnalité est compilée dans le binaire, sans appel à des bibliothèques externes.
-
-| Fonctionnalité | Implémentation interne | Dépendance externe ? |
-|----------------|------------------------|---------------------|
+| Fonctionnalité | Implémentation | Dépendance externe ? |
+|----------------|----------------|---------------------|
 | Serveur HTTP | Moteur Fiber/Fasthttp intégré | **Non** |
-| Base de données | GORM + drivers SQLite/Postgres/MySQL compilés | **Non** |
+| Base de données | GORM + drivers SQLite/Postgres/MySQL | **Non** (compilés) |
 | Moteur JavaScript | Goja (embarqué) | **Non** |
 | Templates | Moteur Mustache maison + JS serveur | **Non** |
-| Temps-réel | Hub SSE/WS/MQTT/IO shardé maison | **Non** |
-| WAF | Coraza compilé dans le binaire | **Non** |
-| Paiements | Stripe/MoMo/X402 – appels HTTP natifs | **Non** (pas de SDK) |
-| Emails | SMTP/SendGrid/Mailgun – appels HTTP natifs | **Non** |
+| Temps-réel | Hub SSE/WS/MQTT/IO shardé | **Non** |
+| WAF | Coraza compilé | **Non** |
+| Paiements | Appels HTTP natifs | **Non** (pas de SDK) |
+| Emails | Appels HTTP natifs | **Non** |
 | Authentification | Système unifié interne | **Non** |
 
-**La seule chose que Beba appelle à l'extérieur, ce sont les APIs des services que vous utilisez (Stripe, SendGrid, etc.). Pas de bibliothèques clientes. Pas de SDK. Juste des appels HTTP standards.**
+**Aucun appel à `npm install`. Aucun `go get`. Aucun `pip install`. Rien.**
 
 ---
 
-## Aucun SDK
-
-Un SDK est une promesse de commodité qui devient une dette :
-
-- Le SDK évolue. Votre code doit suivre.
-- Le SDK a des dépendances. Leurs dépendances aussi.
-- Le SDK change d'API tous les 18 mois.
-
-**Avec Beba, vous n'utilisez aucun SDK.** Vous envoyez des requêtes HTTP standard. Vous manipulez du JSON. Vous écrivez du SQL ou utilisez l'API CRUD native.
-
-```javascript
-// Pas de SDK Stripe. Juste une requête HTTP.
-const response = await fetch('https://api.stripe.com/v1/charges', {
-  method: 'POST',
-  headers: { 'Authorization': 'Bearer sk_xxx' },
-  body: JSON.stringify({ amount: 999, currency: 'eur' })
-});
-```
-
-**Votre code n'a pas besoin de savoir que Stripe existe.** Changez l'URL, changez de fournisseur. Pas de migration de SDK.
-
----
-
-## Ce que vous gardez
-
-| Élément | Standard | Portable ? |
-|---------|----------|------------|
-| **Données** | SQLite / PostgreSQL / MySQL | Oui. Exportez votre base, utilisez-la ailleurs. |
-| **Templates** | HTML + Mustache + JS | Oui. Lisibles, modifiables, transférables. |
-| **Routes** | Fichiers dans des dossiers | Oui. Rien de propriétaire. |
-| **Scripts** | JavaScript standard | Oui. Pas de syntaxe exotique. |
-
-Beba ne vous enferme pas. Beba vous libère des outils qui vous enferment.
-
----
-
-## Installation et utilisation
-
-### Depuis les sources
+## Installation
 
 ```bash
 git clone https://github.com/badlee/beba.git
@@ -166,89 +167,57 @@ cd beba
 go build -o beba .
 ```
 
-### Binaire pré-compilé
+Ou binaire pré-compilé :
 
 ```bash
 wget https://github.com/badlee/beba/releases/latest/beba-linux-amd64
 chmod +x beba-linux-amd64
-./beba-linux-amd64
 ```
 
-### Mode simple
+---
+
+## Utilisation minimale
 
 ```bash
 ./beba
 ```
 
-**Vous avez immédiatement :**
-- `http://localhost:8080` → votre site
+**Dès ce moment, sans aucun fichier :**
+- `http://localhost:8080` → votre site (pages/ par défaut)
 - `http://localhost:8080/_admin` → interface d'administration
 - `http://localhost:8080/api/users` → API REST automatique
+- Base SQLite persistante dans `./.data/beba.db`
 - Broker MQTT sur port 1883
-- Hub temps-réel sur `/sse`, `/ws`, `/api/realtime/mqtt`
+- Hub temps-réel (SSE/WebSocket/MQTT/Socket.IO)
 
-### Avec configuration avancée
-
-```bash
-./beba --bind app.bind
-```
-
-### Mode Virtual Hosts
-
-```bash
-./beba ./vhosts --vhosts
-```
+**Vos données survivent aux redémarrages. Sans configuration.**
 
 ---
 
-## Documentation technique complète
+## Conclusion
 
-| Fichier | Description |
-|---------|-------------|
-| [BINDER.md](doc/BINDER.md) | Configuration `.bind` – Référence complète |
-| [ROUTER.md](doc/ROUTER.md) | FsRouter – Routage par fichiers (Next.js-like) |
-| [HTTP.md](doc/HTTP.md) | HTTP/HTTPS – Moteur web, SSL, middlewares |
-| [DATABASE.md](doc/DATABASE.md) | Base de données – Schémas, relations, API CRUD |
-| [ADMIN.md](doc/ADMIN.md) | Admin UI – Interface d'administration |
-| [JS_SCRIPTING.md](doc/JS_SCRIPTING.md) | Scripting JS – API serveur, modules natifs |
-| [SECURITY.md](doc/SECURITY.md) | Sécurité – Architecture Sentinelle 5 couches |
-| [PAYMENT.md](doc/PAYMENT.md) | Paiements – Stripe, Mobile Money, Crypto X402 |
-| [MQTT.md](doc/MQTT.md) | MQTT – Broker temps-réel unifié |
-| [DTP.md](doc/DTP.md) | DTP – Protocole IoT natif (TCP/UDP) |
-| [IO.md](doc/IO.md) | Socket.IO – Support natif |
-| [MAIL.md](doc/MAIL.md) | Emails – SMTP, SendGrid, Mailgun |
-| [TEMPLATING.md](doc/TEMPLATING.md) | Templates – Mustache + JavaScript |
-| [STORAGE.md](doc/STORAGE.md) | Session & Cache – Persistance et JWT |
-| [VHOST.md](doc/VHOST.md) | Virtual Hosts – Multi-sites, Master-Worker |
-| [CLI.md](doc/CLI.md) | Ligne de commande – Flags et options |
+> *"La meilleure dépendance est celle que vous n'avez pas."*
+
+**Beba n'a pas de dépendances.**
+- Pas de `node_modules` à auditer
+- Pas de framework à migrer
+- Pas de runtime externe à maintenir
+- Pas de SDK à suivre
+- Pas de plugin à compatibiliser
+
+**Beba a un binaire, un dossier `.data`, et vos fichiers.**
+
+Dans 5 ans, vous pourrez prendre le même binaire, et votre application tournera toujours.
+
+**0 SDK. 0 Framework. 0 Plugin. Beba.**
 
 ---
 
-## Pourquoi le nom Beba ?
-
-**Beba** signifie *"Tous, Tout le monde"* en langue **Akélé** (Gabon).
-
-- **Universalité** : Beba sert tous les développeurs, tous les projets, tous les protocoles.
-- **Communauté** : Beba rassemble base de données, API, temps-réel, sécurité et paiements.
-- **Rareté** : Un nom unique, sans collision, qui porte une histoire.
-
-> *Beba. Pour tous, partout.*
+*Beba – Un binaire. Zéro dépendance. Des possibilités infinies.*
 
 ---
 
-## Contribution
-
-1. Tester le projet
-2. Signaler des bugs
-3. Soumettre des pull requests
-4. Écrire des exemples ou tutoriels
-
----
-
-## Licence
-
-Beba License – voir le fichier [LICENSE](LICENSE).
-
----
-
-*Déployez, Sécurisez, Encaissez. Beba.*
+**Liens :**
+- [Documentation complète](doc/)
+- [LICENSE](LICENSE)
+- [GitHub](https://github.com/badlee/beba)
