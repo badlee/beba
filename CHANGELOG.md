@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.8] - 2026-04-24
+
+### Added
+- **Unified JavaScript Engine (Processor)**: Standardized all script executions (HTTP, DTP, Auth, Workers) to use the `processor` package. This ensures a consistent environment with access to all internal modules and proper base directory context.
+- **JS Auth Debugging**: Added `console.log` and `print` support to the authentication script VM, enabling server-side logging for complex auth logic.
+- **DTP Scripting Support**: Enabled JavaScript handlers for all DTP message types (`DATA`, `EVENT`, `CMD`, `PING`, `PONG`, `ACK`, `NACK`, `ERR`). Handlers have access to `device`, `packet`, and `payload`.
+
+### Fixed
+- **DTP Authentication Handshake**: Resolved a critical authentication failure where `AuthManagers` were lost during the vhost process transition.
+- **DTP Device Cache Key**: Fixed a type mismatch in the DTP session cache, ensuring device IDs are correctly tracked as `uuid.UUID`.
+- **Config Merge Logic**: Fixed a bug in `main.go` where authentication managers were not properly merged into the active configuration during startup/reload.
+
+## [0.0.7] - 2026-04-23
+
+### Added
+- **Global Authentication Managers**: Introduced `AUTH [name] DEFINE` blocks for centralized security management. Managers support multiple identity sources, database-backed session tracking, and JWT signing.
+- **Unified Password Hashing**: Implemented a comprehensive hashing system in `modules/auth`. Supports `{BCRYPT}`, `{SHA512}`, `{SHA256}`, `{SHA1}`, and `{MD5}`.
+- **Automatic Encoding Detection**: The hashing engine automatically identifies and decodes **Base64**, **Hex**, and **Base32** (RFC4648) encodings for checksum-based hashes.
+- **Bcrypt Auto-Detection**: Passwords starting with `$2` (standard bcrypt format) are automatically treated as Bcrypt hashes.
+- **Enhanced Auth DSL**: Added support for `USERS [FORMAT]`, `USERS CSV`, and `AUTH CSV` within global managers, allowing flexible identity source declarations.
+- **OAuth2 Identity Provider**: Finalized the `SERVER DEFINE` block, enabling Beba to act as a full OIDC-compliant Identity Provider with stateless JWT tokens and JTI revocation.
+
+### Fixed
+- **Auth Syntax Unification**: Resolved discrepancies between `USERS CSV` and `AUTH CSV` in the binder parser, ensuring both keywords correctly initialize the CSV strategy.
+- **Hashing Priority**: Optimized the order of encoding detection in `CheckPassword` (Base32 > Base64 > Hex) to prevent false positives for short checksums.
+
 ## [0.0.6] - 2026-04-23
 
 ### Added

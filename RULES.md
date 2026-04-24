@@ -68,7 +68,8 @@ Ce document définit les règles de codage et les standards à suivre pour le pr
 
 1. **Context-Aware**: Any `Strategy` implementation in `modules/auth` MUST take `context.Context` (or `fiber.Ctx` where applicable) to support session-based or token-based logic.
 2. **Centralization**: Always define authentication using the global `AUTH [name] DEFINE` block. Avoid inline `AUTH` directives inside protocols unless necessary for strict backward compatibility.
-3. **Hashing**: New passwords stored in local configurations (USER, CSV, File) MUST be validated using the built-in `CheckPassword` helper, which natively supports `{SHA512}`, `{BCRYPT}`, etc.
+3. **Hashing**: New passwords stored in local configurations (USER, USERS, CSV, File) MUST be validated using the built-in `CheckPassword` helper, which natively supports `{BCRYPT}`, `{SHA512}`, `{SHA256}`, `{SHA1}`, `{MD5}` and multiple encodings (Hex, B32, B64).
+4. **DSL Alignment**: The binder parser MUST support both `USERS CSV` and `AUTH CSV` as valid aliases for initializing the CSV strategy within an `AUTH DEFINE` block.
 4. **OAuth2 Integration**: External identities must be configured within the global AUTH block using `STRATEGY [name] DEFINE`. Beba can act as a Provider via `SERVER DEFINE` generating stateless JWTs with database-backed JTI tracking.
 5. **JS API**: The unified authentication system MUST be exposed to JavaScript via `require('auth')`. This provides `authenticate()`, `generateToken()`, `validateToken()`, and `revokeToken()`, returning `null` on failure rather than throwing exceptions.
 6. **Escaping**: Binder variables and arguments MUST support multiple quote types (``,"",'') with backslash escaping.
@@ -196,3 +197,9 @@ func (m *Model) buildStructType(forMigration bool) reflect.Type {
     return reflect.StructOf(fields)
 }
 ```
+
+### JavaScript Engine (Processor)
+
+1. **VM Initialization**: NEVER use `goja.New()` directly to execute scripts. Always use `processor.New(dir, ctx, config)` or `processor.NewEmpty()` to ensure that the entire internal environment (modules, globals, `require`, `console`, `print`, etc.) is correctly initialized and available to the script.
+2. **Context Passing**: When calling `processor.New()` from a Fiber handler, always pass the current `fiber.Ctx` to allow the VM to access request locals, parameters, and context-aware modules.
+3. **Template Rendering**: Prefer `processor.Process()` or `processor.ProcessFile()` for HTML/template rendering to benefit from Mustache integration and HTMX injection.

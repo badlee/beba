@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -125,6 +127,23 @@ func (d *MQTTDirective) Start() ([]net.Listener, error) {
 
 	// Let the binder Manager handle Accept() enforcing Security checks
 	log.Printf("MQTT: Listening on %s", d.cfg.Address)
+
+	if os.Getenv("BEBA_VHOST_CHILD") != "1" && d.cfg.AppConfig != nil && d.cfg.AppConfig.Socket != "" {
+		network := "unix"
+		if runtime.GOOS == "windows" && strings.HasPrefix(d.cfg.AppConfig.Socket, `\\.\pipe\`) {
+			network = "npipe"
+		}
+		if network == "unix" {
+			_ = os.Remove(d.cfg.AppConfig.Socket)
+		}
+		ln, err := net.Listen(network, d.cfg.AppConfig.Socket)
+		if err != nil {
+			log.Printf("MQTT: Failed to listen on socket %s: %v", d.cfg.AppConfig.Socket, err)
+			return nil, err
+		}
+		return []net.Listener{ln}, nil
+	}
+
 	ln, err := net.Listen("tcp", d.cfg.Address)
 	if err != nil {
 		log.Printf("MQTT: Failed to listen on %s: %v", d.cfg.Address, err)
@@ -272,10 +291,8 @@ func parseMQTTOptions(opts *mqtt.Options, route *RouteConfig) {
 }
 
 func parseMQTTAuthAndACL(hooks *sse.MQTTHooksDispatcher, cfg *DirectiveConfig) {
-	// Parse AUTH blocks
-	for _, auth := range cfg.Auth {
-		hooks.AddAuthBlock(string(auth.Type), auth.Handler, auth.Inline, auth.Configs)
-	}
+	// Use unified auth managers
+	hooks.SetAuthManagers(cfg.Auth)
 	
 	// Parse ACL blocks
 	aclRoutes := cfg.GetRoutes("ACL")

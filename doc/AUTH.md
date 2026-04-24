@@ -1,87 +1,142 @@
 # Authentication System (AUTH)
 
-La directive `AUTH` fournit un système d'authentification flexible et unifié pour les protocoles HTTP, HTTPS et DTP.
+La directive `AUTH` fournit un système d'authentification flexible, unifié et hautement sécurisé pour l'ensemble de l'écosystème Beba (HTTP, HTTPS, MQTT, DTP).
 
-## Syntaxe de base
+Il repose sur deux piliers :
+1.  **Gestionnaires Globaux (`AUTH DEFINE`)** : Définition de banques d'utilisateurs réutilisables, avec support OAuth2 (Client et Serveur).
+2.  **Directives de Montage** : Application d'un gestionnaire ou d'une stratégie locale sur un protocole ou une route spécifique.
 
-La directive `AUTH` peut être utilisée de plusieurs manières selon la source de données.
+---
 
-### 1. Fichiers de configuration (JSON, YAML, TOML, ENV)
-Charge une liste d'utilisateurs et de mots de passe (ou hachages) depuis un fichier.
+## 1. Gestionnaires Globaux (`AUTH [name] DEFINE`)
 
+Un gestionnaire global permet de centraliser la configuration de sécurité (Secret JWT, base de données de sessions) et de combiner plusieurs sources d'utilisateurs.
+
+### Syntaxe exhaustive
 ```hcl
-AUTH JSON config/users.json
-AUTH YAML config/users.yaml
-AUTH TOML config/users.toml
-AUTH ENV .env.auth
-```
+AUTH "main-auth" DEFINE
+    SECRET "votre-cle-secrete-jwt"     // Utilisé pour signer les jetons d'accès
+    DATABASE "sqlite://auth.db"        // Stockage des jetons révoqués (JTI) et sessions
 
-> [!NOTE]
-> Le format doit être un objet simple clé-valeur : `"username": "password"`.
+    // --- Serveur OAuth2 (Beba comme Provider) ---
+    SERVER DEFINE
+        TOKEN_EXPIRATION "1h"          // Durée de validité des Access Tokens
+        ISSUER "beba-cloud"            // Nom de l'émetteur dans le JWT
+        LOGIN "./public/login.html"    // Interface de login personnalisée
+    END SERVER
 
-### 2. Fichiers CSV
-```hcl
-AUTH CSV users.csv
-```
-Le fichier CSV doit utiliser le point-virgule `;` comme séparateur :
-`username;password;[proto_bool]`
-- `proto_bool` (optionnel) : Pour DTP, indique si l'appareil doit utiliser Protocol Buffers.
+    // --- Clients OAuth2 (Social Login) ---
+    STRATEGY "google" DEFINE
+        CLIENTID "xxx.apps.googleusercontent.com"
+        CLIENTSECRET "GOCSPX-xxx"
+        REDIRECT "https://votre-site.com/auth/callback/google"
+        SCOPE "openid email profile"
+    END STRATEGY
 
-### 3. Utilisateur unique
-```hcl
-AUTH USER admin p@ssword
-```
-
-### 4. Authentification scriptée (JavaScript)
-Permet une logique d'authentification complexe (ex: vérification dynamique, calculs).
-
-```hcl
-AUTH
-    if (username === "admin" && password === config.SUPER_PWD) {
-        allow();
-    } else {
-        reject("Accès refusé");
-    }
+    // --- Sources d'utilisateurs locales ---
+    USER "admin" "{BCRYPT}$2a$12$..." // Utilisateur statique
+    USERS JSON "./users.json"          // Fichier JSON (Map username -> pwd)
+    USERS CSV "./devices.csv"          // Fichier CSV (username;pwd;[proto])
+    
+    // Handler scripté complexe
+    AUTH BEGIN
+        if (user === "root" && pwd === "secret") allow();
+        else reject("Accès interdit");
+    END AUTH
 END AUTH
 ```
 
-- **Variables disponibles** : `username`, `password` (alias `user`, `pwd`), `config` (si des arguments `KEY=VALUE` sont passés à `AUTH`).
-- **Helpers** :
-  - `allow()` : Autorise l'accès (HTTP/DTP).
-  - `reject(msg...)` : Refuse l'accès. Accepte un message optionnel (utilisé comme Realm dans HTTP).
-  - `allow(secret, useProto)` : **Spécifique DTP** — Définit le secret de l'appareil et son mode de transport (Protocol Buffers).
+---
 
-> [!TIP]
-> L'implémentation utilise des canaux bufferisés pour garantir que l'exécution du script ne bloque pas le serveur, même en cas d'appels multiples à `allow()` ou `reject()`.
+## 2. Support du Hachage (Hashing)
 
-## Support du Hachage (Hashing)
-Tous les mots de passe peuvent être stockés en clair, hachés avec **Bcrypt** ou via d'autres algorithmes standards. Le serveur détecte automatiquement le format :
+Beba supporte nativement le hachage sécurisé des mots de passe. Le système détecte automatiquement l'algorithme via le préfixe `{ALG}` ou le format du hash.
 
-- **Bcrypt** : Détecté par les préfixes `$2a$`, `$2b$`, `$2y$`, `$2x$`.
-- **Algorithmes {ALG}** : Supporte les préfixes `{SHA512}`, `{SHA256}`, `{SHA1}`, `{MD5}`.
-- **Encodage** : Le hachage après le préfixe peut être en **Hexadécimal**, **Base32** (RFC4648, sans padding) ou **Base64** standard.
+### Algorithmes supportés
+- **BCRYPT** : Recommandé. Détecté par le préfixe `$2a$`, `$2b$`, `$2y$` ou explicitement par `{BCRYPT}`.
+- **SHA512** : Préfixe `{SHA512}`.
+- **SHA256** : Préfixe `{SHA256}`.
+- **SHA1** : Préfixe `{SHA1}`.
+- **MD5** : Préfixe `{MD5}` (déconseillé pour les mots de passe, utile pour les legacy).
 
-**Exemple de génération (SHA-256) :**
-```bash
-echo "{SHA256}`printf 'secret' | openssl dgst -binary -sha256 | base64`"
-# Résultat : {SHA256}K7gNU3sdo+OL0wNhqoVWhr3g6s1xYv72ol/pe/Unols=
-```
+### Encodages des Hashs
+Le hash binaire résultant peut être stocké dans les formats suivants (détection automatique) :
+*   **Base64** : Standard (ex: `K7gNU3sdo+OL0wNhqoVWhr3g6s1xYv72ol/pe/Unols=`)
+*   **Hexadécimal** : Minuscule ou Majuscule (ex: `2bb80d537b1d...`)
+*   **Base32** : Sans padding, RFC4648 (ex: `FP4A2U3X...`)
 
-**Usage dans Binder :**
+**Exemple d'usage :**
 ```hcl
-AUTH USER admin "{SHA512}vSsar3708Jvp9Szi2NWZZ02Bqp1qRCFpbcTZPdBhnWgs5WtNZKnvCXdhztmeD2cmW192CF5bDufKRpayrW/isg=="
+AUTH USER "admin" "{SHA256}K7gNU3sdo+OL0wNhqoVWhr3g6s1xYv72ol/pe/Unols="
 ```
 
-## Intégration par Protocole
+---
+
+## 3. Intégration par Protocole
 
 ### HTTP / HTTPS
-L'authentification est implémentée via le standard **Basic Authentication**. Le client recevra un header `WWW-Authenticate` s'il n'est pas authentifié.
+Montage d'un gestionnaire global sur une route. Les endpoints `/login`, `/me`, `/logout` et `/callback/:strategy` sont automatiquement générés.
 
-### DTP
-L'authentification est utilisée pendant le handshake DTP.
-- `OnGetDevice` : Utilise `AUTH` pour trouver le secret correspondant au `DeviceID`.
-- `OnAuthDevice` : Vérifie le token HMAC généré à partir du secret.
+```hcl
+HTTP :80
+    // Monte le gestionnaire "main-auth" sur le préfixe /auth
+    AUTH "main-auth" /auth
+    
+    GET /private BEGIN
+        // Cette route nécessite une authentification via le manager associé
+        if (!ctx.User()) return ctx.SendStatus(401);
+        ctx.SendString(`Hello ${ctx.User().Username}`);
+    END GET
+END HTTP
+```
 
 ### MQTT
-Le broker MQTT (sur WebSocket) supporte l'authentification lors de la connexion via le paquet `CONNECT`. 
-- **Mapping** : Les credentials fournis dans les champs `username` et `password` de la trame MQTT sont validés par le système `AUTH` configuré sur la route ou via une fonction native.
+Utilisé pour valider le paquet `CONNECT`.
+
+```hcl
+TCP :1883
+    MQTT
+        AUTH BEGIN
+            // Logique spécifique aux objets connectés
+            if (username.startsWith("device_") && password === "secret123") {
+                allow();
+            }
+        END AUTH
+    END MQTT
+END TCP
+```
+
+### DTP (Distributed Transmission Protocol)
+Utilisé pendant le handshake pour valider l'identité de l'appareil (DeviceID/Secret).
+
+```hcl
+TCP :80
+    DTP
+        USERS CSV "./inventory.csv" // Format: device_id;secret;use_proto
+        
+        DATA "TELEMETRY" BEGIN
+            print(`Données de ${device.DeviceID}: ${payload}`);
+        END DATA
+    END DTP
+END TCP
+```
+
+---
+
+## 4. Authentification Scriptée (JavaScript)
+
+Permet d'injecter du code arbitraire pour valider les accès.
+
+**Variables disponibles :**
+- `user`, `username` : Identifiant fourni par le client.
+- `pwd`, `password` : Mot de passe ou token secret.
+- `config` : Map d'arguments passés à la directive.
+
+**Méthodes :**
+- `allow(secret, useProto)` : Valide l'accès. 
+    - *Secret* : (Optionnel) Pour DTP, définit le secret utilisé pour le HMAC.
+    - *useProto* : (Optionnel) Pour DTP, booléen forçant l'usage de Protobuf.
+- `reject(message)` : Refuse l'accès avec un message explicatif.
+
+**Debug :**
+Les scripts d'authentification ont accès aux fonctions globales `print()` et `console.log()` pour faciliter le débogage dans les logs du serveur.

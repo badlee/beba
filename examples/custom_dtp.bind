@@ -1,0 +1,16 @@
+# Example configuration using custom JS protocol
+
+REGISTER PROTOCOL DTP "./custom_dtp.js"
+
+# Bind port 8888 and multiplex HTTP and DTP
+TCP 0.0.0.0:8888
+    # Match HTTP first
+    HTTP
+        STATIC / ./public
+    END HTTP
+
+    # Match DTP if it's not HTTP
+    DTP
+        # No inner directives needed for now, handled by JS
+    END DTP
+END TCP

@@ -100,6 +100,11 @@ func parseFlagsArgs(args []string) (*AppConfig, error) {
 	flagSet := pflag.NewFlagSet("beba", pflag.ContinueOnError)
 	flagSet.Usage = func() {} // On gère l'affichage nous-mêmes
 
+	// Ignore unknown flags if a subcommand is used (e.g., 'proxy' or 'test')
+	if len(args) > 0 && (args[0] == "proxy" || args[0] == "test") {
+		flagSet.ParseErrorsAllowlist.UnknownFlags = true
+	}
+
 	// durRefs : champs time.Duration — flag int intermédiaire à convertir post-parse
 	type durRef struct {
 		fieldIdx int

@@ -1,8 +1,10 @@
 release
 node_modules
 .data
+.logs
 data
 logs
+scratch
 /*.txt
 stderr.log
 stdout.log
@@ -14,6 +16,7 @@ stdout.log
 *.sqlite3
 beba.pid
 beba
+beba_test
 .vscode
 *.db
 *.db-shm

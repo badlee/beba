@@ -119,7 +119,17 @@ func (m *Manager) Auth(username, password string, token ...string) error {
 }
 
 func (m *Manager) UserInfo(username string) (types.UserInfo, error) {
-	// This might need more thought on how to retrieve stored password/proto info
-	// if we are doing Basic Auth.
-	return nil, errors.New("UserInfo not implemented in unified manager yet")
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, s := range m.strategies {
+		if ac, ok := s.(interface {
+			UserInfo(string) (types.UserInfo, error)
+		}); ok {
+			if info, err := ac.UserInfo(username); err == nil {
+				return info, nil
+			}
+		}
+	}
+	return nil, errors.New("user not found")
 }

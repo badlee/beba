@@ -63,7 +63,8 @@ Gérez vos utilisateurs et identités externes avec une syntaxe déclarative glo
 - Logique custom : Authentification scriptable en JavaScript (`allow()` / `reject()`).
 - **OAuth2 Client** : Connexion via Google, GitHub, etc. (`STRATEGY`).
 - **OAuth2 Server** : Transformez Beba en fournisseur d'identité avec des Access Tokens JWT sans état (`SERVER DEFINE`).
-- **API JS Unifiée** : Pilotez l'authentification et les JWT depuis vos scripts via `require('auth')`.
+- **Hachage Avancé** : Support natif de **Bcrypt**, **SHA-512/256/1**, **MD5** avec détection automatique d'encodage (**Base64, Hex, Base32**).
+- **API JS Unifiée** : Pilotez l'authentification et les JWT depuis vos scripts via `require('auth')`. Les scripts d'authentification bénéficient désormais du plein environnement Beba via `processor.New()` (incluant `console.log` et `print`).
 Montage automatique des APIs standard (`/auth/login`, `/auth/me`, `/auth/callback/:strategy`, `/oauth2/*`) sur vos routes.
 
 ### Hub realtime massivement scalable
@@ -114,7 +115,7 @@ END GET
 Un seul port, des protocoles multiples. Grâce au **Binder**, vous pouvez mixer sur la même socket :
 - HTTP / HTTPS
 - MQTT
-- DTP (protocole IoT maison)
+- DTP (protocole IoT maison) : Support complet de l'authentification scriptée et des handlers d'événements JS.
 - Protocoles JavaScript personnalisés
 - **Contrôle déclaratif** : Désactivation fine des fonctionnalités (ex. `DISABLE ADMIN UI`, `DISABLE DEFAULT API`) via la directive `DISABLE`.
 - **API CRUD Standardisée** : REST API automatique sur `/api/_schema` et `/api/:schema`.

@@ -57,6 +57,7 @@ Le bloc `DTP` permet d'associer des scripts JavaScript à des types de paquets o
 | `ERR` | Handler pour les messages d'erreur du protocole. |
 | `QUEUE` | Handler pour la mise en file d'attente (messages persistants). |
 | `ONLINE` | Hook de statut de session (publie sur `dtp.session.status`). |
+| `PING` / `PONG` | Handlers pour les messages de battement de cœur. |
 
 ### Subtypes
 Les subtypes peuvent être spécifiés par leur nom (ex: `SENSOR_DATA`) ou leur code hexadécimal (ex: `0x01`).
@@ -70,6 +71,12 @@ DTP
 
     # Handler générique pour les données capteurs
     DATA 0x01 HANDLER "scripts/process_sensor.js"
+
+    # Handler pour les PINGS
+    PING BEGIN
+        print("Ping reçu de " + device.DeviceID);
+        // La réponse PONG est automatique si non gérée, mais peut être personnalisée ici
+    END PING
 END DTP
 ```
 

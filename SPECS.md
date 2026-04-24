@@ -58,7 +58,8 @@ Ce document définit les tâches prioritaires pour l'évolution du projet.
 - [x] **[Sécurité]** Intégration du WAF Coraza (L7) avec support des directives `@WAF`, `@IP`, `@GEO`, `@BOT`, `@AUDIT`.
 - [x] **[Technique]** Support robuste du multiplexage MQTT dans les blocs `TCP` : élimination des conflits de ports et délégation de connexion via "ghost listeners".
 - [x] **[Technique]** Optimisation "Two-Phase Peeking" : timeout 1ms pour réponse immédiate sur port unique, 2s pour multiplexage actif.
-- [x] **[Technique]** Enregistrement des mots-clés `MQTT`, `DATABASE`, `MAIL` dans le parser Binder pour support nested.
+- [x] **[Technique]** Standardisation de l'initialisation VM : passage obligatoire par `processor.New()` pour garantir un environnement cohérent partout.
+- [x] **[Technique]** Correction du handshake DTP et de la persistence des AuthManagers en mode VHost.
 - [x] Documentation complète de toutes les directives dans `doc/BINDER.md`, `doc/WAF.md`, `RULES.md`, `README.md`.
 - [x] Exemples de tests dans `examples/` : `test_all_features.bind`, `multiplex_test.bind`, `rewrite_test.bind`, `security_geojson_*.bind`, `security_default_override.bind`.
 
@@ -215,4 +216,4 @@ Voici la liste des fichiers de documentation et leur utilité :
 - [doc/PAYMENT.md](doc/PAYMENT.md) : Module de paiement (Stripe, MoMo, providers custom).
 
 ---
-*Dernière mise à jour : 22 Avril 2026*
+*Dernière mise à jour : 23 Avril 2026*

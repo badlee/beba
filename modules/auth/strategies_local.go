@@ -9,6 +9,9 @@ import (
 	"os"
 	"strings"
 
+	"beba/processor"
+	"beba/types"
+
 	"github.com/dop251/goja"
 	"github.com/joho/godotenv"
 	"github.com/pelletier/go-toml/v2"
@@ -29,6 +32,13 @@ func (s *StaticUserStrategy) Authenticate(ctx context.Context, creds map[string]
 		return &User{ID: u, Username: u}, nil
 	}
 	return nil, errors.New("invalid static credentials")
+}
+
+func (s *StaticUserStrategy) UserInfo(username string) (types.UserInfo, error) {
+	if username == s.Username {
+		return &AuthResult{Username: s.Username, Secret: s.Password}, nil
+	}
+	return nil, errors.New("user not found")
 }
 
 // FileStrategy handles JSON, YAML, TOML, ENV
@@ -70,6 +80,30 @@ func (s *FileStrategy) Authenticate(ctx context.Context, creds map[string]string
 	return nil, errors.New("invalid file credentials")
 }
 
+func (s *FileStrategy) UserInfo(username string) (types.UserInfo, error) {
+	data, err := os.ReadFile(s.Path)
+	if err != nil {
+		return nil, err
+	}
+
+	var users map[string]string
+	switch strings.ToUpper(s.Format) {
+	case "JSON":
+		json.Unmarshal(data, &users)
+	case "YAML":
+		yaml.Unmarshal(data, &users)
+	case "TOML":
+		toml.Unmarshal(data, &users)
+	case "ENV":
+		users, _ = godotenv.Unmarshal(string(data))
+	}
+
+	if pwd, ok := users[username]; ok {
+		return &AuthResult{Username: username, Secret: pwd}, nil
+	}
+	return nil, errors.New("user not found")
+}
+
 // CSVStrategy
 type CSVStrategy struct {
 	Path string
@@ -108,6 +142,32 @@ func (s *CSVStrategy) Authenticate(ctx context.Context, creds map[string]string)
 	return nil, errors.New("invalid csv credentials")
 }
 
+func (s *CSVStrategy) UserInfo(username string) (types.UserInfo, error) {
+	f, err := os.Open(s.Path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	r := csv.NewReader(f)
+	r.Comma = ';'
+	records, err := r.ReadAll()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, rec := range records {
+		if len(rec) >= 2 && rec[0] == username {
+			res := &AuthResult{Username: username, Secret: rec[1]}
+			if len(rec) >= 3 {
+				res.UseProto = rec[2] == "true"
+			}
+			return res, nil
+		}
+	}
+	return nil, errors.New("user not found")
+}
+
 // ScriptStrategy
 type ScriptStrategy struct {
 	Code    string
@@ -129,9 +189,8 @@ func (s *ScriptStrategy) Authenticate(ctx context.Context, creds map[string]stri
 		code = []byte(s.Code)
 	}
 
-	// We need a way to run JS. We'll use beba/processor but we need a fiber context or mock it.
-	// Since Authenticate might not have a fiber context (e.g. DTP), we need a minimal VM.
-	vm := goja.New()
+	// We'll use beba/processor to get a fully initialized VM
+	vm := processor.New(s.BaseDir, nil)
 
 	// Inject credentials
 	vm.Set("username", creds["username"])
@@ -182,4 +241,26 @@ func (s *ScriptStrategy) Authenticate(ctx context.Context, creds map[string]stri
 	default:
 		return nil, errors.New("script did not call allow() or reject()")
 	}
+}
+
+func (s *ScriptStrategy) UserInfo(username string) (types.UserInfo, error) {
+	// To get the user info from a script, we run the script with a mock password
+	// and see what secret it provides in the allow() call.
+	creds := map[string]string{"username": username, "password": ""}
+	user, err := s.Authenticate(context.Background(), creds)
+	if err != nil {
+		return nil, err
+	}
+
+	res := &AuthResult{Username: username}
+	if user.Metadata != nil {
+		if secret, ok := user.Metadata["secret"].(string); ok {
+			res.Secret = secret
+		}
+		if proto, ok := user.Metadata["proto"].(bool); ok {
+			res.UseProto = proto
+		}
+	}
+
+	return res, nil
 }

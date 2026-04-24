@@ -13,6 +13,7 @@ import (
 
 	mqtt "github.com/mochi-mqtt/server/v2"
 	"github.com/mochi-mqtt/server/v2/packets"
+	"beba/modules/auth"
 )
 
 // MQTTRoute holds DSL block information decoupled from binder parsing.
@@ -24,20 +25,14 @@ type MQTTRoute struct {
 	Inline  bool
 }
 
-// AuthHandler wraps information from an AUTH block in the DSL.
-type AuthHandler struct {
-	Type    string
-	Inline  bool
-	Handler string // Path or Inline script
-	Configs map[string]string
-}
+// AuthHandler is deprecated, replaced by auth.Manager
 
 // MQTTHooksDispatcher manages JS execution contexts for MQTT hooks.
 type MQTTHooksDispatcher struct {
 	baseDir string
 	env     map[string]string
 	vm      *processor.Processor
-	auths   []*AuthHandler
+	auths   auth.Managers
 	acls    []*MQTTRoute
 	bridges []*MQTTRoute
 	events  []*MQTTRoute
@@ -57,14 +52,13 @@ func NewMQTTHooksDispatcher(baseDir string, env map[string]string) *MQTTHooksDis
 	}
 }
 
-// AddAuthBlock parses the AUTH block.
+// SetAuthManagers sets the unified auth managers.
+func (hd *MQTTHooksDispatcher) SetAuthManagers(m auth.Managers) {
+	hd.auths = m
+}
+
+// AddAuthBlock is deprecated.
 func (hd *MQTTHooksDispatcher) AddAuthBlock(t string, handler string, inline bool, configs map[string]string) {
-	hd.auths = append(hd.auths, &AuthHandler{
-		Type:    t,
-		Handler: handler,
-		Inline:  inline,
-		Configs: configs,
-	})
 }
 
 // AddACLRoute parses the ACL block.
@@ -91,32 +85,10 @@ func (hd *MQTTHooksDispatcher) AuthFunc() MQTTAuthFunc {
 			return "", nil
 		}
 
-		for _, auth := range hd.auths {
-			if auth.Type == "SCRIPT" {
-				var script string
-				if auth.Inline {
-					script = auth.Handler
-				} else {
-					file := auth.Handler
-					if !filepath.IsAbs(file) {
-						file = filepath.Join(hd.baseDir, file)
-					}
-					b, err := os.ReadFile(file)
-					if err != nil {
-						fmt.Printf("MQTT Auth File Error: %v\n", err)
-						continue
-					}
-					script = string(b)
-				}
-
-				// Execute JS script using the central processor-initialized Runtime.
-				// Bubble up the exact error returned by reject(msg) so callers can inspect it.
-				if err := hd.executeAuthScript(username, password, clientID, script); err != nil {
-					return "", err // propagate reject(msg) directly
-				}
-				return "", nil // allow()
-			}
+		if err := hd.auths.Auth(username, password); err != nil {
+			return "", err
 		}
+		return "", nil
 
 		// No AUTH block matched (shouldn't happen, but safe default)
 		return "", errors.New("unauthorized")

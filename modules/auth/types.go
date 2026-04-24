@@ -63,6 +63,7 @@ type AuthConfig struct {
 }
 
 type AuthConfigs []*AuthConfig
+type Managers []*Manager
 
 type AuthManagerConfig struct {
 	Name       string

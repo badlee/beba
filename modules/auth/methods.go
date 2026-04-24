@@ -16,7 +16,20 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func (a *AuthConfigs) Append(c *AuthConfig) { *a = append(*a, c) }
+func (a *Managers) Append(m ...*Manager) { *a = append(*a, m...) }
+func (a *AuthConfigs) Append(c ...*AuthConfig) { *a = append(*a, c...) }
+
+func (m Managers) Auth(username, password string, token ...string) error {
+	for _, manager := range m {
+		if manager == nil {
+			continue
+		}
+		if err := manager.Auth(username, password, token...); err == nil {
+			return nil
+		}
+	}
+	return errors.New("unauthorized")
+}
 
 func (a AuthConfigs) Auth(username, password string, token ...string) error {
 	for _, ac := range a {
@@ -34,6 +47,18 @@ func (auth *AuthConfig) Name() string {
 func (a AuthConfigs) UserInfo(username string) (types.UserInfo, error) {
 	for _, ac := range a {
 		if r, err := ac.UserInfo(username); err == nil {
+			return r, nil
+		}
+	}
+	return nil, errors.New("user not found")
+}
+
+func (m Managers) UserInfo(username string) (types.UserInfo, error) {
+	for _, manager := range m {
+		if manager == nil {
+			continue
+		}
+		if r, err := manager.UserInfo(username); err == nil {
 			return r, nil
 		}
 	}
@@ -119,12 +144,25 @@ func (auth *AuthConfig) Authenticate(ctx context.Context, creds map[string]strin
 }
 
 func (auth *AuthConfig) UserInfo(username string) (types.UserInfo, error) {
-	// Minimal implementation for legacy support
-	// In a real scenario, we'd need to search for the user first.
-	// For now, we'll just return a mock if it's AuthUser.
-	if auth.Type == AuthUser && auth.User == username {
-		return &AuthResult{Username: username, Secret: auth.Password}, nil
+	switch auth.Type {
+	case AuthUser:
+		if auth.User == username {
+			return &AuthResult{Username: username, Secret: auth.Password}, nil
+		}
+	case AuthCSV:
+		strategy := &CSVStrategy{Path: auth.Filepath}
+		return strategy.UserInfo(username)
+	case AuthFile:
+		strategy := &FileStrategy{Path: auth.Filepath, Format: auth.Format}
+		return strategy.UserInfo(username)
+	case AuthScript:
+		strategy := &ScriptStrategy{
+			Code:    auth.Handler,
+			IsFile:  !auth.Inline,
+			BaseDir: auth.BaseDir,
+			Configs: auth.Configs,
+		}
+		return strategy.UserInfo(username)
 	}
-	// For CSV/File, we'd need to read the file again.
 	return nil, errors.New("not found")
 }

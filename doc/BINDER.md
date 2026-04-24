@@ -17,14 +17,28 @@ AUTH [name] DEFINE                     // Enregistre un gestionnaire d'authentif
     SECRET "my-secret"                 // Configuration globale
     DATABASE "sqlite://auth.db"
 
-    // + Définition des stratégies locales (USER, USERS, AUTH CSV, AUTH BEGIN...)
-    // + Définition des clients OAuth2 (STRATEGY google DEFINE...)
-    
-    SERVER DEFINE                      // Beba comme Provider OAuth2
+    // --- Serveur OAuth2 (Identity Provider) ---
+    SERVER DEFINE
         TOKEN_EXPIRATION "1h"
         ISSUER "beba-auth"
         LOGIN "./public/login.html"    // Interface personnalisée optionnelle
     END SERVER
+
+    // --- Clients OAuth2 (Social Logins) ---
+    STRATEGY google DEFINE
+        CLIENTID "xxx"
+        CLIENTSECRET "yyy"
+    END STRATEGY
+
+    // --- Déclarations de sources d'utilisateurs ---
+    USER "admin" "{SHA256}..."        // Utilisateur unique statique
+    USERS JSON "./users.json"          // Fichier clé/valeur pour user:pwd
+    [USERS|AUTH] CSV [filepath]        // Fichier CSV "username;pwd;[proto_bool]"
+    AUTH [js_filepath] [KEY=VALUE ...] // Authentification scriptée (fichier)
+    AUTH BEGIN [KEY=VALUE ...]         // Authentification scriptée (inline)
+        /* JS code */
+    END AUTH
+
 END AUTH
 
 [PROTOCOL] [address]                   // Groupe d'écoute (TCP, UDP, HTTP, HTTPS, MQTT, MAIL, DATABASE, DTP...)
@@ -84,15 +98,8 @@ END AUTH
 
     // -- Authentication --
     // Montage d'un gestionnaire global:
-    AUTH [name] [path]                 // Monte le gestionnaire d'authentification [name] sur la route [path] (ex: /api/auth)
-    
-    // Déclarations en ligne (dépréciées au profit du gestionnaire global) :
-    AUTH [JSON|YAML|TOML|ENV] [filepath] // Fichier clé/valeur pour user:pwd
-    AUTH CSV [filepath]               // Fichier CSV "username;pwd;[proto_bool]"
-    AUTH USER [USER_NAME] [PWD]        // Déclaration utilisateur unique
-    AUTH [KEY=VALUE ...]               // Authentification scriptée JS
-        /* JS code */
-    END AUTH
+    AUTH [name] [path]                 // Monte le gestionnaire d'authentification [name] sur la route [path] (ex: /auth)
+    // Plus d'infos dans doc/AUTH.md
 
     // -- Événements (HTTP/DTP) --
     EVENT [NAME] [KEY=VALUE ...]       // Événement inline
@@ -111,6 +118,9 @@ END AUTH
         AUTH CSV "devices.csv"         // Recommandé pour la gestion des appareils
         DATA [subtype] HANDLER [js]    // Handler pour DATA (subtype: nom ou hex) - Recommandé pour capteurs
         EVENT [subtype] HANDLER [js]   // Handler pour EVENT (alertes, événements d'état)
+        CMD [subtype] HANDLER [js]     // Handler pour CMD
+        PING HANDLER [js]              // Handler pour PING
+        PONG HANDLER [js]              // Handler pour PONG
         ACK [subtype] HANDLER [js]     // Handler pour ACK
         NACK [subtype] HANDLER [js]    // Handler pour NACK
         ERR [subtype] HANDLER [js]     // Handler pour ERROR

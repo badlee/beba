@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -44,7 +45,8 @@ var Version = "dev"
 // -------------------- TYPES VHOST --------------------
 
 type VhostListen struct {
-	Protocol string // "http", "https", "tcp", "udp"
+	Protocol string // "http", "https", "tcp", "udp", "dtp", "mqtt"
+	Network  string // "tcp", "udp"
 	Port     int
 	Socket   string
 }
@@ -149,7 +151,7 @@ func main() {
 	processor.SetVMConfig(cfg)
 
 	// Détection mode child (spawné par le master vhost)
-	isChild := os.Getenv("BEBA_VHOST_CHILD") == "1"
+	isChild := os.Getenv("BEBA_VHOST_CHILD") == "1" || os.Getenv("BEBA_PROXY_CHILD") == "1"
 
 	// Sous-commandes
 
@@ -163,15 +165,20 @@ func main() {
 			exit(fmt.Errorf("Test Failed: %v", err))
 		}
 		exit()
-	} else if !isChild && len(args) > 0 && args[0] == "proxy" {
+	} else if len(args) > 0 && args[0] == "proxy" {
 		// beba proxy --proto TCP --port 1234 --workers 'JSON'
+		proxyFlags := pflag.NewFlagSet("proxy", pflag.ContinueOnError)
+		proxyFlags.ParseErrorsWhitelist.UnknownFlags = true // Ignore global flags like --vhosts
+		
 		proto := ""
 		port := 0
 		workersJSON := ""
-		pflag.StringVar(&proto, "proto", "tcp", "Protocol (tcp, udp, http, https)")
-		pflag.IntVar(&port, "port", 0, "Port to listen on")
-		pflag.StringVar(&workersJSON, "workers", "", "JSON map of domain to socket path")
-		pflag.Parse()
+		proxyFlags.StringVar(&proto, "proto", "tcp", "Protocol (tcp, udp, http, https)")
+		proxyFlags.IntVar(&port, "port", 0, "Port to listen on")
+		proxyFlags.StringVar(&workersJSON, "workers", "", "JSON map of domain to socket path")
+		
+		// Parse from os.Args[2:] which contains flags after "proxy"
+		proxyFlags.Parse(os.Args[2:])
 
 		if port == 0 || workersJSON == "" {
 			exit("proxy command requires --port and --workers")
@@ -265,6 +272,12 @@ func main() {
 				}
 				mergedCfg.Registrations = append(mergedCfg.Registrations, bcfg.Registrations...)
 				mergedCfg.Groups = append(mergedCfg.Groups, bcfg.Groups...)
+				if mergedCfg.AuthManagers == nil {
+					mergedCfg.AuthManagers = make(map[string]*binder.AuthManagerConfig)
+				}
+				for k, v := range bcfg.AuthManagers {
+					mergedCfg.AuthManagers[k] = v
+				}
 				allFiles = append(allFiles, files...)
 			}
 
@@ -288,7 +301,7 @@ func main() {
 			return allFiles, nil
 		}
 		if cfg.ControlSocket != "" {
-			go runControlSocket(cfg, currentManager)
+			go runControlSocket(cfg, func() *binder.Manager { return currentManager })
 		}
 
 		files, err := reload(false)
@@ -358,7 +371,7 @@ func main() {
 
 	// -------------------- MODE MASTER (vhost) --------------------
 	if !isChild && cfg.VHosts {
-		vhostInfos, err := scanVhosts(root, cfg.Port)
+		vhostInfos, err := scanVhosts(root, cfg)
 		if err != nil {
 			exit(fmt.Errorf("Error scanning vhost directory %s: %v", root, err))
 		}
@@ -371,9 +384,9 @@ func main() {
 		socketFiles := []string{}
 
 		type listenerKey struct {
-			protocol string
-			port     int
-			socket   string
+			network string
+			port    int
+			socket  string
 		}
 		portGroups := make(map[listenerKey]map[string]string)
 		publicSocketFiles := []string{}
@@ -386,14 +399,18 @@ func main() {
 
 			// Record every listener this vhost wants to join
 			for _, l := range vi.Listens {
-				lk := listenerKey{protocol: l.Protocol, port: l.Port, socket: l.Socket}
+				p := strings.ToUpper(l.Protocol)
+				if p != "HTTP" && p != "HTTPS" {
+					continue // Only HTTP/HTTPS go through the proxy in vhost mode
+				}
+				lk := listenerKey{network: l.Network, port: l.Port, socket: l.Socket}
 				if portGroups[lk] == nil {
 					portGroups[lk] = make(map[string]string)
 				}
-				// Route main domain and aliases to this worker's socket
-				portGroups[lk][vi.Domain] = sockPath
+				// Route main domain and aliases to this worker's control socket
+				portGroups[lk][vi.Domain] = controlSock
 				for _, alias := range vi.Aliases {
-					portGroups[lk][alias] = sockPath
+					portGroups[lk][alias] = controlSock
 				}
 
 				if l.Socket != "" {
@@ -438,24 +455,26 @@ func main() {
 		}()
 
 		for lKey, domainMap := range portGroups {
-			// Spawn a proxy process for each unique protocol/port
+			// Spawn a proxy process for each unique network/port
 			workersJSON, _ := json.Marshal(domainMap)
-			childArgs := []string{"proxy", "--proto", lKey.protocol, "--port", strconv.Itoa(lKey.port), "--workers", string(workersJSON)}
+			childArgs := []string{"proxy", "--proto", lKey.network, "--port", strconv.Itoa(lKey.port), "--workers", string(workersJSON)}
 			if lKey.socket != "" {
 				childArgs = append(childArgs, "--socket", lKey.socket)
 			}
 			childArgs = append(childArgs, configToChildArgs()...)
 
 			cmd := exec.Command(os.Args[0], childArgs...)
+			log.Printf("DEBUG: Spawning proxy: %s %v", os.Args[0], childArgs)
+			cmd.Env = append(os.Environ(), "BEBA_PROXY_CHILD=1")
 			cmd.Stdout = globalStdout
 			cmd.Stderr = globalStderr
 			if err := cmd.Start(); err != nil {
-				log.Printf("Error: failed to start proxy for %s:%d: %v", lKey.protocol, lKey.port, err)
+				log.Printf("Error: failed to start proxy for %s:%d: %v", lKey.network, lKey.port, err)
 				continue
 			}
 			childProcesses = append(childProcesses, cmd)
 			if !cfg.Silent {
-				fmt.Printf("  -> Spawned proxy for %s on port %d\n", lKey.protocol, lKey.port)
+				fmt.Printf("  -> Spawned proxy for %s on port %d\n", lKey.network, lKey.port)
 			}
 		}
 
@@ -468,10 +487,10 @@ func main() {
 	if len(cfg.BindFiles) == 0 {
 		exit(fmt.Errorf("Failed to initialize server: no bind configuration found"))
 	}
-	
+
 	// Control Socket for IPC Validation
 	if cfg.ControlSocket != "" {
-		go runControlSocket(cfg, currentManager)
+		go runControlSocket(cfg, func() *binder.Manager { return currentManager })
 	}
 
 	// Binder mode already handles the rest (scroll up to -------------------- MODE BINDER --------------------)
@@ -543,7 +562,7 @@ func boolToStr(b bool, trueStr, falseStr string) string {
 
 // -------------------- VHOST --------------------
 
-func scanVhosts(vhostDir string, defaultPort int) ([]VhostInfo, error) {
+func scanVhosts(vhostDir string, cfg *appconfig.AppConfig) ([]VhostInfo, error) {
 	var vhosts []VhostInfo
 	entries, err := os.ReadDir(vhostDir)
 	if err != nil {
@@ -558,7 +577,7 @@ func scanVhosts(vhostDir string, defaultPort int) ([]VhostInfo, error) {
 		vhostRoot := filepath.Join(vhostDir, entry.Name())
 		vhostName := entry.Name()
 
-		vhostFile, err := ensureVhostBind(&appconfig.AppConfig{Port: defaultPort}, vhostRoot, vhostName)
+		vhostFile, err := ensureVhostBind(cfg, vhostRoot, vhostName)
 		if err != nil {
 			log.Printf("Warning: failed to ensure vhost config at %s: %v", vhostRoot, err)
 			continue
@@ -572,13 +591,16 @@ func scanVhosts(vhostDir string, defaultPort int) ([]VhostInfo, error) {
 		var listens []VhostListen
 		var aliases []string
 		var cert, key, email string
+		skipVhost := false
+		hasDomain := false
 
 		for _, g := range bcfg.Groups {
+			if strings.ToUpper(g.Directive) == "TCP" || strings.ToUpper(g.Directive) == "UDP" {
+				log.Printf("Warning: VHost %s is skipped: %s directive is forbidden in vhost mode. Multiplexing is only allowed in single mode.", entry.Name(), g.Directive)
+				skipVhost = true
+				break
+			}
 			for _, item := range g.Items {
-				if item.Address != "" && vhostName == entry.Name() {
-					vhostName = item.Address
-				}
-
 				// Protocol-specific extraction
 				proto := strings.ToLower(item.Name)
 				var port int
@@ -596,6 +618,7 @@ func scanVhosts(vhostDir string, defaultPort int) ([]VhostInfo, error) {
 					switch r.Method {
 					case "DOMAIN":
 						vhostName = r.Path
+						hasDomain = true
 					case "ALIAS":
 						aliases = append(aliases, r.Path)
 					case "ALIASES":
@@ -622,11 +645,12 @@ func scanVhosts(vhostDir string, defaultPort int) ([]VhostInfo, error) {
 					}
 				}
 
+				
 				if port == 0 {
 					switch proto {
 					case "http":
-						if defaultPort > 0 {
-							port = defaultPort
+						if cfg.Port > 0 {
+							port = cfg.Port
 						} else {
 							port = 80
 						}
@@ -635,16 +659,30 @@ func scanVhosts(vhostDir string, defaultPort int) ([]VhostInfo, error) {
 					}
 				}
 
+				network := "tcp"
+				if proto == "udp" {
+					network = "udp"
+				}
+				
 				listens = append(listens, VhostListen{
 					Protocol: proto,
+					Network:  network,
 					Port:     port,
 					Socket:   item.Args.Get("socket"),
 				})
 			}
 		}
 
+		if skipVhost {
+			continue
+		}
+
+		if !hasDomain {
+			vhostName = "*"
+		}
+
 		if len(listens) == 0 {
-			listens = append(listens, VhostListen{Protocol: "http", Port: defaultPort})
+			listens = append(listens, VhostListen{Protocol: "http", Network: "tcp", Port: cfg.Port})
 		}
 
 		vhosts = append(vhosts, VhostInfo{
@@ -652,6 +690,25 @@ func scanVhosts(vhostDir string, defaultPort int) ([]VhostInfo, error) {
 			Cert: cert, Key: key, Email: email,
 		})
 	}
+
+	// Conflict Validation: Enforce one protocol per port, and only HTTP can be multiplexed
+	usedPorts := make(map[string]string) // "addr:port" -> "PROTOCOL"
+	for _, vi := range vhosts {
+		for _, l := range vi.Listens {
+			addr := fmt.Sprintf("%s:%d", cfg.Address, l.Port)
+			proto := strings.ToUpper(l.Protocol)
+			if existing, ok := usedPorts[addr]; ok {
+				if existing != proto {
+					return nil, fmt.Errorf("VHost Conflict: Port %s is used by both %s and %s protocols. Multiplexing is only allowed in single mode.", addr, existing, proto)
+				}
+				if proto != "HTTP" && proto != "HTTPS" {
+					return nil, fmt.Errorf("VHost Conflict: Port %s (protocol %s) is used by multiple vhosts. Only HTTP/HTTPS can be shared in vhost mode.", addr, proto)
+				}
+			}
+			usedPorts[addr] = proto
+		}
+	}
+
 	return vhosts, nil
 }
 
@@ -751,12 +808,138 @@ func handleTCPProxy(proto string, port int, conn net.Conn, workers map[string]st
 	}
 	data := buf[:n]
 
-	// Check each worker
+	// If it's HTTP/HTTPS, try to match by host
+	host := ""
+	if (strings.ToLower(proto) == "http" || strings.ToLower(proto) == "tcp") && len(data) > 0 {
+		if data[0] == 0x16 {
+			host = extractSNI(data)
+		} else {
+			host = extractHost(data)
+		}
+	}
+
+	if host != "" {
+		for pattern, sockPath := range workers {
+			if matchDomain(pattern, host) {
+				if validateAndInject(sockPath, proto, port, data, conn) {
+					return
+				}
+			}
+		}
+	}
+
+	// Fallback or non-HTTP: Check each worker
 	for _, sockPath := range workers {
 		if validateAndInject(sockPath, proto, port, data, conn) {
 			return
 		}
 	}
+}
+
+func matchDomain(pattern, host string) bool {
+	if pattern == "*" || pattern == host {
+		return true
+	}
+	// Regex matching /regex/flags
+	if strings.HasPrefix(pattern, "/") && strings.LastIndex(pattern, "/") > 0 {
+		lastIdx := strings.LastIndex(pattern, "/")
+		regStr := pattern[1:lastIdx]
+		flags := pattern[lastIdx+1:]
+		
+		if strings.Contains(flags, "i") {
+			regStr = "(?i)" + regStr
+		}
+		
+		re, err := regexp.Compile(regStr)
+		if err == nil {
+			return re.MatchString(host)
+		}
+	}
+	// Wildcard matching *.example.com
+	if strings.Contains(pattern, "*") {
+		parts := strings.Split(pattern, "*")
+		if len(parts) == 2 {
+			return strings.HasPrefix(host, parts[0]) && strings.HasSuffix(host, parts[1])
+		}
+	}
+	return false
+}
+
+func extractHost(peek []byte) string {
+	s := string(peek)
+	lines := strings.Split(s, "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(strings.ToLower(line), "host:") {
+			parts := strings.SplitN(line, ":", 2)
+			if len(parts) > 1 {
+				h := strings.TrimSpace(parts[1])
+				// strip port if present
+				if strings.Contains(h, ":") {
+					h, _, _ = net.SplitHostPort(h)
+				}
+				return h
+			}
+		}
+	}
+	return ""
+}
+
+func extractSNI(peek []byte) string {
+	if len(peek) < 43 {
+		return ""
+	}
+	pos := 43
+	if len(peek) <= pos {
+		return ""
+	}
+	sessionIDLen := int(peek[pos])
+	pos += 1 + sessionIDLen
+	if len(peek) <= pos+2 {
+		return ""
+	}
+	cipherSuiteLen := int(peek[pos])<<8 | int(peek[pos+1])
+	pos += 2 + cipherSuiteLen
+	if len(peek) <= pos {
+		return ""
+	}
+	compressionMethodLen := int(peek[pos])
+	pos += 1 + compressionMethodLen
+	if len(peek) <= pos+2 {
+		return ""
+	}
+	extensionsLen := int(peek[pos])<<8 | int(peek[pos+1])
+	pos += 2
+	end := pos + extensionsLen
+	if len(peek) < end {
+		return ""
+	}
+	for pos+4 <= end {
+		extType := int(peek[pos])<<8 | int(peek[pos+1])
+		extLen := int(peek[pos+2])<<8 | int(peek[pos+3])
+		pos += 4
+		if extType == 0x00 { // SNI
+			if pos+2 > end {
+				return ""
+			}
+			sniListLen := int(peek[pos])<<8 | int(peek[pos+1])
+			pos += 2
+			if pos+sniListLen > end {
+				return ""
+			}
+			if pos+3 > end {
+				return ""
+			}
+			// server name type (1) + name len (2)
+			nameLen := int(peek[pos+1])<<8 | int(peek[pos+2])
+			pos += 3
+			if pos+nameLen > end {
+				return ""
+			}
+			return string(peek[pos : pos+nameLen])
+		}
+		pos += extLen
+	}
+	return ""
 }
 
 func validateAndInject(sockPath, proto string, port int, data []byte, rawConn net.Conn) bool {
@@ -784,31 +967,23 @@ func validateAndInject(sockPath, proto string, port int, data []byte, rawConn ne
 	}
 	defer c.Close()
 
-	if (strings.ToLower(proto) == "http" || strings.ToLower(proto) == "https") && rawConn != nil {
-		if fconn, ok := rawConn.(interface{ File() (*os.File, error) }); ok {
-			f, _ := fconn.File()
-			if f != nil {
-				defer f.Close()
-				if err := sendFD(c, f); err == nil {
-					return true
-				}
-			}
-		}
-		return false
-	}
 
-	// For TCP/UDP, send a validation request
+
+	// 1. Send validation request
 	type Req struct {
 		Proto string `json:"proto"`
 		Port  string `json:"port"`
 		Data  []byte `json:"data"`
 	}
-	json.NewEncoder(c).Encode(Req{
+	if err := json.NewEncoder(c).Encode(Req{
 		Proto: proto,
 		Port:  strconv.Itoa(port),
 		Data:  data,
-	})
+	}); err != nil {
+		return false
+	}
 
+	// 2. Wait for OK
 	type Resp struct {
 		OK bool `json:"ok"`
 	}
@@ -818,30 +993,22 @@ func validateAndInject(sockPath, proto string, port int, data []byte, rawConn ne
 		return false
 	}
 
-	// If TCP, pass the FD
+	// 3. If TCP/HTTP/HTTPS, pass the FD
 	if strings.ToLower(proto) == "tcp" && rawConn != nil {
 		var f *os.File
-		// Get raw FD from the connection
-		switch tc := rawConn.(type) {
-		case *net.TCPConn:
-			f, _ = tc.File()
-		case *net.UnixConn:
-			f, _ = tc.File()
-		default:
-			return false
+		if fconn, ok := rawConn.(interface{ File() (*os.File, error) }); ok {
+			f, _ = fconn.File()
 		}
 		if f == nil {
 			return false
 		}
 		defer f.Close()
-
 		return sendFD(c, f) == nil
 	}
 
 	return true
 }
-
-func runControlSocket(cfg *appconfig.AppConfig, m *binder.Manager) {
+func runControlSocket(cfg *appconfig.AppConfig, getManager func() *binder.Manager) {
 	_ = os.Remove(cfg.ControlSocket)
 	ln, err := net.Listen("unix", cfg.ControlSocket)
 	if err != nil {
@@ -863,28 +1030,32 @@ func runControlSocket(cfg *appconfig.AppConfig, m *binder.Manager) {
 			}
 			if err := json.NewDecoder(c).Decode(&req); err == nil {
 				ok := false
+				m := getManager()
 				if m != nil {
 					ok = m.Validate(req.Proto, req.Port, req.Data)
 				}
+				log.Printf("ControlSocket: Validated proto=%s port=%s ok=%v", req.Proto, req.Port, ok)
 				json.NewEncoder(c).Encode(map[string]bool{"ok": ok})
 
 				// If it's a TCP vhost and we validated it, wait for the FD
 				if ok && strings.ToLower(req.Proto) == "tcp" {
 					f, err := receiveFD(c)
 					if err != nil {
+						log.Printf("ControlSocket: receiveFD failed: %v", err)
 						return
 					}
 					defer f.Close()
 					conn, err := net.FileConn(f)
 					if err != nil {
-						return
-					}
-					if err != nil {
+						log.Printf("ControlSocket: FileConn failed: %v", err)
 						return
 					}
 
+					log.Printf("ControlSocket: FD passed successfully, calling HandleWithPeek")
 					m.HandleWithPeek(conn, req.Data)
 				}
+			} else {
+				log.Printf("ControlSocket: Decode failed: %v", err)
 			}
 		}(conn)
 	}
@@ -999,10 +1170,15 @@ func ensureVhostBind(cfg *appconfig.AppConfig, root string, domain string) (stri
 	}
 
 	// Auto-generate a minimal .vhost.bind for this directory
-	if domain == "" {
-		domain = "0.0.0.0"
+	address := cfg.Address
+	if address == "" {
+		address = "0.0.0.0"
 	}
-	content := fmt.Sprintf("HTTP %s\n  PORT %d\n  ROUTER .\nEND HTTP\n", domain, cfg.Port)
+	content := fmt.Sprintf("HTTP %s\n  PORT %d\n", address, cfg.Port)
+	if domain != "" && domain != "0.0.0.0" {
+		content += fmt.Sprintf("  DOMAIN %s\n", domain)
+	}
+	content += "  ROUTER .\nEND HTTP\n"
 	if err := os.WriteFile(bindPath, []byte(content), 0644); err != nil {
 		return "", err
 	}

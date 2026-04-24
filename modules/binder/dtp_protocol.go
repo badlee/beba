@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -68,11 +70,14 @@ func NewDTPDirective(config *DirectiveConfig) (*DTPDirective, error) {
 			return nil
 		}
 		inner.OnGetDevice = func(deviceID string) *dtpserver.DeviceConfig {
-			info, err := config.Auth.UserInfo(deviceID)
-			if err != nil {
-				return nil
-			}
 			id, err := uuid.Parse(deviceID)
+			if err == nil {
+				if s, ok := cache.Load(id); ok {
+					return s.(*dtpserver.DeviceConfig)
+				}
+			}
+
+			info, err := config.Auth.UserInfo(deviceID)
 			if err != nil {
 				return nil
 			}
@@ -81,7 +86,7 @@ func NewDTPDirective(config *DirectiveConfig) (*DTPDirective, error) {
 				Secret:       []byte(info.Pwd()),
 				UseProtoBuff: info.Proto(),
 			}
-			cache.Store(deviceID, s)
+			cache.Store(id, s)
 			return s
 		}
 	} else {
@@ -227,6 +232,24 @@ func (d *DTPDirective) Name() string    { return "DTP" }
 func (d *DTPDirective) Address() string { return d.address }
 
 func (d *DTPDirective) Start() ([]net.Listener, error) {
+	// In vhost mode, non-HTTP protocols must listen directly on their port.
+	// We only use the socket if we are NOT in a vhost child process, 
+	// or if the protocol was explicitly designed for it (like HTTP).
+	if os.Getenv("BEBA_VHOST_CHILD") != "1" && d.cfg.AppConfig != nil && d.cfg.AppConfig.Socket != "" {
+		network := "unix"
+		if runtime.GOOS == "windows" && strings.HasPrefix(d.cfg.AppConfig.Socket, `\\.\pipe\`) {
+			network = "npipe"
+		}
+		if network == "unix" {
+			_ = os.Remove(d.cfg.AppConfig.Socket)
+		}
+		ln, err := net.Listen(network, d.cfg.AppConfig.Socket)
+		if err != nil {
+			return nil, err
+		}
+		return []net.Listener{ln}, nil
+	}
+
 	ln, err := net.Listen("tcp", d.address)
 	if err != nil {
 		return nil, err

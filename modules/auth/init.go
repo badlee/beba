@@ -7,10 +7,21 @@ import (
 
 func Initialize(configs map[string]*AuthManagerConfig) error {
 	for name, cfg := range configs {
-		m := NewManager(name, cfg.Secret)
+		m := GetManager(name)
+		if m == nil {
+			m = NewManager(name, cfg.Secret)
+		} else {
+			m.mu.Lock()
+			m.secret = cfg.Secret
+			m.strategies = nil
+			m.clients = make(map[string]*OAuth2Client)
+			m.mu.Unlock()
+		}
 		
 		if cfg.Server != nil {
+			m.mu.Lock()
 			m.serverConfig = cfg.Server
+			m.mu.Unlock()
 		}
 
 		if cfg.Database != "" {

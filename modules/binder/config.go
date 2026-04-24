@@ -153,7 +153,7 @@ type DirectiveConfig struct {
 	Routes        Routes            // All custom directives declared inside this block
 	AppConfig     *config.AppConfig // Injected at runtime by the caller
 	BaseDir       string            // Absolute dir of the source .bind file
-	Auth          AuthConfigs       // AUTH directives
+	Auth          Managers          // AUTH managers
 	disabledCache map[string]bool
 	mu            sync.RWMutex
 }
@@ -363,6 +363,7 @@ func (r Routes) GetGroups() Routes {
 type AuthResult = auth.AuthResult
 type AuthConfig = auth.AuthConfig
 type AuthConfigs = auth.AuthConfigs
+type Managers = auth.Managers
 type AuthManagerConfig = auth.AuthManagerConfig
 type OAuth2ClientConfig = auth.OAuth2ClientConfig
 type OAuth2ServerConfig = auth.OAuth2ServerConfig

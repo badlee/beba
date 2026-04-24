@@ -483,17 +483,21 @@ func (m *Manager) Validate(proto, port string, data []byte) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	for _, d := range m.directives {
-		// Filter by address if the directive has one
+	log.Printf("Validate: Starting validation for proto=%s port=%s with %d directives", proto, port, len(m.directives))
+	for i, d := range m.directives {
 		addr := d.Address()
+		log.Printf("Validate: Check [%d] Name=%s Address=%s", i, d.Name(), addr)
 		if addr != "" {
 			_, dPort, err := net.SplitHostPort(addr)
 			if err == nil && dPort != port {
+				log.Printf("Validate: Check [%d] skipped due to port mismatch (dPort=%s, port=%s)", i, dPort, port)
 				continue
 			}
 		}
 
-		if match, _ := d.Match(data); match {
+		match, err := d.Match(data)
+		log.Printf("Validate: Check [%d] Match returned match=%v err=%v", i, match, err)
+		if match {
 			return true
 		}
 	}

@@ -9,10 +9,10 @@ import (
 	"fmt"
 	"log"
 
+	"beba/modules/auth"
 	"beba/modules/crud"
 	_ "beba/modules/pdf"
 	"beba/modules/sse"
-	"beba/modules/auth"
 	"beba/plugins/httpserver"
 	"beba/plugins/js"
 	"beba/processor"
@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"sort"
 	"strconv"
@@ -258,12 +259,12 @@ func NewHTTPDirective(config *DirectiveConfig) *HTTPDirective {
 			case "ERROR", "WORKER", "PROXY", "REWRITE", "REDIRECT", "MIDDLEWARE", "SSL", "CRUD", "SECURITY", "PORT", "DOMAIN", "ALIAS", "ALIASES", "DATABASE", "STORAGE", "DISABLE", "AUTH":
 				if r.Method == "AUTH" {
 					authName := r.Path
-					mountPath := r.Handler
-					if mountPath == "" {
-						mountPath = "/auth"
-					}
 					m := auth.GetManager(authName)
 					if m != nil {
+						mountPath := r.Handler
+						if mountPath == "" {
+							mountPath = "/api/" + authName + "/auth"
+						}
 						auth.RegisterRoutes(router.Group(mountPath), m)
 					} else {
 						log.Printf("HTTP: auth manager %s not found", authName)
@@ -1061,6 +1062,21 @@ func NewHTTPDirective(config *DirectiveConfig) *HTTPDirective {
 func (p *HTTPDirective) Name() string    { return "HTTP" }
 func (p *HTTPDirective) Address() string { return p.address }
 func (p *HTTPDirective) Start() ([]net.Listener, error) {
+	if p.cfg.AppConfig != nil && p.cfg.AppConfig.Socket != "" {
+		network := "unix"
+		if runtime.GOOS == "windows" && strings.HasPrefix(p.cfg.AppConfig.Socket, `\\.\pipe\`) {
+			network = "npipe"
+		}
+		if network == "unix" {
+			_ = os.Remove(p.cfg.AppConfig.Socket)
+		}
+		ln, err := net.Listen(network, p.cfg.AppConfig.Socket)
+		if err != nil {
+			return nil, err
+		}
+		return []net.Listener{ln}, nil
+	}
+
 	ln, err := net.Listen("tcp", p.address)
 	if err != nil {
 		return nil, err
@@ -1089,16 +1105,45 @@ func (p *HTTPDirective) Match(peek []byte) (bool, error) {
 	}
 
 	// Match domain or aliases
-	if strings.EqualFold(host, p.domain) {
+	if p.matchDomain(p.domain, host) {
 		return true, nil
 	}
 	for _, a := range p.aliases {
-		if strings.EqualFold(host, a) {
+		if p.matchDomain(a, host) {
 			return true, nil
 		}
 	}
 
 	return false, nil
+}
+
+func (p *HTTPDirective) matchDomain(pattern, host string) bool {
+	if pattern == "*" || pattern == host {
+		return true
+	}
+	// Regex matching /regex/flags
+	if strings.HasPrefix(pattern, "/") && strings.LastIndex(pattern, "/") > 0 {
+		lastIdx := strings.LastIndex(pattern, "/")
+		regStr := pattern[1:lastIdx]
+		flags := pattern[lastIdx+1:]
+
+		if strings.Contains(flags, "i") {
+			regStr = "(?i)" + regStr
+		}
+
+		re, err := regexp.Compile(regStr)
+		if err == nil {
+			return re.MatchString(host)
+		}
+	}
+	// Wildcard matching *.example.com
+	if strings.Contains(pattern, "*") {
+		parts := strings.Split(pattern, "*")
+		if len(parts) == 2 {
+			return strings.HasPrefix(host, parts[0]) && strings.HasSuffix(host, parts[1])
+		}
+	}
+	return false
 }
 
 func (p *HTTPDirective) matchBasic(peek []byte) (bool, error) {
@@ -1122,7 +1167,12 @@ func extractHost(peek []byte) string {
 		if strings.HasPrefix(strings.ToLower(line), "host:") {
 			parts := strings.SplitN(line, ":", 2)
 			if len(parts) > 1 {
-				return strings.TrimSpace(parts[1])
+				h := strings.TrimSpace(parts[1])
+				// strip port if present
+				if strings.Contains(h, ":") {
+					h, _, _ = net.SplitHostPort(h)
+				}
+				return h
 			}
 		}
 	}
@@ -1719,7 +1769,7 @@ func fiberErrorFromJS(c fiber.Ctx, err error, defaultCode int) error {
 // Admin auth helper
 // ─────────────────────────────────────────────────────────────────────────────
 
-func handleAdminAuth(c fiber.Ctx, auth AuthConfigs, redirect, message, appName string, basic bool) error {
+func handleAdminAuth(c fiber.Ctx, auth Managers, redirect, message, appName string, basic bool) error {
 	authHeader := c.Get("Authorization")
 	if basic {
 		if authHeader == "" {

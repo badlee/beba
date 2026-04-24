@@ -11,6 +11,8 @@ import (
 
 	"sync"
 
+	"beba/modules/auth"
+
 	"github.com/joho/godotenv"
 	"github.com/pelletier/go-toml/v2"
 	"gopkg.in/yaml.v3"
@@ -296,6 +298,11 @@ func (ctx *parseContext) handleTopLevel(toks []string, pl parsedLine) error {
 		}
 		return nil
 	}
+	// When inside a top-level AUTH DEFINE block, delegate to handleInsideAuth
+	// instead of treating lines as group declarations.
+	if ctx.currentAuth != nil {
+		return ctx.handleInsideAuth(toks, pl)
+	}
 	if len(toks) < 2 {
 		return fmt.Errorf("%s:%d: invalid group (expected: PROTO ADDRESS)", pl.file, pl.lineNum)
 	}
@@ -421,13 +428,26 @@ func (ctx *parseContext) handleInsideAuth(toks []string, pl parsedLine) error {
 			ctx.currentAuth.Secret = strings.Trim(toks[1], "\"'`")
 		}
 	case "USERS":
-		if len(toks) >= 3 {
-			ac := &AuthConfig{
-				Type:     AuthFile,
-				Format:   strings.ToUpper(toks[1]),
-				Filepath: strings.Trim(toks[2], "\"'`"),
+		if len(toks) < 2 {
+			return nil
+		}
+		sub := strings.ToUpper(toks[1])
+		if sub == "CSV" {
+			if len(toks) >= 3 {
+				ctx.currentAuth.Strategies.Append(&AuthConfig{
+					Type:     AuthCSV,
+					Filepath: strings.Trim(toks[2], "\"'`"),
+				})
 			}
-			ctx.currentAuth.Strategies.Append(ac)
+		} else {
+			if len(toks) >= 3 {
+				ac := &AuthConfig{
+					Type:     AuthFile,
+					Format:   strings.ToUpper(toks[1]),
+					Filepath: strings.Trim(toks[2], "\"'`"),
+				}
+				ctx.currentAuth.Strategies.Append(ac)
+			}
 		}
 	case "USER":
 		if len(toks) >= 3 {
@@ -444,14 +464,15 @@ func (ctx *parseContext) handleInsideAuth(toks []string, pl parsedLine) error {
 			return nil
 		}
 		sub := strings.ToUpper(toks[1])
-		if sub == "CSV" {
+		switch sub {
+		case "CSV":
 			if len(toks) >= 3 {
 				ctx.currentAuth.Strategies.Append(&AuthConfig{
 					Type:     AuthCSV,
 					Filepath: strings.Trim(toks[2], "\"'`"),
 				})
 			}
-		} else if sub == "BEGIN" {
+		case "BEGIN":
 			ac := &AuthConfig{Type: AuthScript, Inline: true}
 			if len(toks) > 2 {
 				ac.Configs = parseArgs(strings.Join(toks[2:], " "))
@@ -459,7 +480,7 @@ func (ctx *parseContext) handleInsideAuth(toks []string, pl parsedLine) error {
 			ctx.currentAuth.Strategies.Append(ac)
 			ctx.inlineTarget = inlineTarget{authConfig: ac}
 			ctx.inlineCode.Reset()
-		} else {
+		default:
 			// AUTH filepath [args]
 			ac := &AuthConfig{Type: AuthScript, Inline: false, Handler: strings.Trim(toks[1], "\"'`")}
 			if len(toks) > 2 {
@@ -679,71 +700,20 @@ func (ctx *parseContext) parseAUTH(toks []string) error {
 	if ctx.currentProto == nil || len(toks) < 2 {
 		return nil
 	}
-	sub := strings.ToUpper(toks[1])
-	switch sub {
-	case "JSON", "YAML", "TOML", "ENV":
-		if len(toks) >= 3 {
-			ctx.currentProto.Auth.Append(&AuthConfig{
-				Type: AuthFile, Format: sub, Filepath: toks[2], BaseDir: ctx.currentProto.BaseDir,
-			})
+	managerName := toks[1]
+	m := auth.GetManager(managerName)
+	if m == nil {
+		// Fallback: check if it's being defined in this config (locally-defined
+		// AUTH managers are stored in ctx.config.AuthManagers during parsing, but
+		// not yet registered globally — that happens at runtime via auth.Initialize).
+		if cfg, ok := ctx.config.AuthManagers[managerName]; ok {
+			// Eagerly create the manager so subsequent references work.
+			m = auth.NewManager(cfg.Name, cfg.Secret)
+		} else {
+			return fmt.Errorf("auth manager %s not found", managerName)
 		}
-	case "CSV":
-		if len(toks) >= 3 {
-			ctx.currentProto.Auth.Append(&AuthConfig{
-				Type: AuthCSV, Filepath: toks[2], BaseDir: ctx.currentProto.BaseDir,
-			})
-		}
-	case "USER":
-		if len(toks) >= 4 {
-			ctx.currentProto.Auth.Append(&AuthConfig{
-				Type: AuthUser, User: toks[2], Password: toks[3], BaseDir: ctx.currentProto.BaseDir,
-			})
-		}
-	case "HANDLER":
-		if len(toks) >= 3 {
-			args := Arguments{}
-			if len(toks) > 3 {
-				args = parseArgs(strings.Join(toks[3:], " "))
-			}
-			ctx.currentProto.Auth.Append(&AuthConfig{
-				Type: AuthScript, Handler: toks[2], Inline: false, Configs: args, BaseDir: ctx.currentProto.BaseDir,
-			})
-		}
-	case "BEGIN":
-		args := Arguments{}
-		if len(toks) > 2 {
-			args = parseArgs(strings.Join(toks[2:], " "))
-		}
-		ac := &AuthConfig{Type: AuthScript, Inline: true, Configs: args, BaseDir: ctx.currentProto.BaseDir}
-		ctx.currentProto.Auth.Append(ac)
-		ctx.inlineTarget = inlineTarget{authConfig: ac}
-		ctx.inlineCode.Reset()
-	default:
-		// AUTH [args]  or standalone AUTH (implies inline script or block)
-		args := Arguments{}
-		if strings.HasPrefix(toks[1], "[") {
-			args = parseArgs(toks[1])
-		} else if len(toks) > 1 {
-			// Might be a handler path or just args
-			if strings.Contains(toks[1], "=") {
-				args = parseArgs(strings.Join(toks[1:], " "))
-			} else {
-				// AUTH handler.js [args]
-				handler := toks[1]
-				if len(toks) > 2 {
-					args = parseArgs(strings.Join(toks[2:], " "))
-				}
-				ctx.currentProto.Auth.Append(&AuthConfig{
-					Type: AuthScript, Inline: false, Handler: handler, Configs: args, BaseDir: ctx.currentProto.BaseDir,
-				})
-				return nil
-			}
-		}
-		ac := &AuthConfig{Type: AuthScript, Inline: true, Configs: args, BaseDir: ctx.currentProto.BaseDir}
-		ctx.currentProto.Auth.Append(ac)
-		ctx.inlineTarget = inlineTarget{authConfig: ac}
-		ctx.inlineCode.Reset()
 	}
+	ctx.currentProto.Auth.Append(m)
 	return nil
 }
 
@@ -1039,7 +1009,7 @@ func newProto(name, address string, args Arguments, file string) *DirectiveConfi
 		BaseDir: filepath.Dir(file),
 		Env:     make(Arguments),
 		Configs: make(Arguments),
-		Auth:    AuthConfigs(make([]*AuthConfig, 0)),
+		Auth:    auth.Managers(make([]*auth.Manager, 0)),
 	}
 }
 
