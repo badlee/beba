@@ -112,7 +112,7 @@ END GET
 ```
 
 ### Multiplexage de protocoles (Binder)
-Un seul port, des protocoles multiples. Grâce au **Binder**, vous pouvez mixer sur la même socket :
+En mode **single-mode**, grâce au **Binder TCP/UDP**, vous pouvez mixer sur la même socket :
 - HTTP / HTTPS
 - MQTT
 - DTP (protocole IoT maison) : Support complet de l'authentification scriptée et des handlers d'événements JS.
@@ -121,10 +121,17 @@ Un seul port, des protocoles multiples. Grâce au **Binder**, vous pouvez mixer 
 - **API CRUD Standardisée** : REST API automatique sur `/api/_schema` et `/api/:schema`.
 - **Admin UI** : Dashboard moderne accessible sur `/_admin`.
 
+```bash
+beba ./website_site_folder
+```
+
 Configuration déclarative via des fichiers `.bind`.
 
 ### Virtual hosts (multi-sites)
 Mode **Master-Worker** : chaque site tourne dans son propre processus, avec son environnement JavaScript isolé. Configuration via fichier `.vhost` ou `.vhost.bind`.
+
+> [!CAUTION]
+> Le multiplexage de protocoles (via `TCP` ou `UDP` Binder) n'est **pas disponible** en mode Virtual Hosts. Seuls les protocoles de haut niveau (HTTP, HTTPS) peuvent partager les ports publics. Les protocoles comme MQTT ou DTP doivent utiliser des ports exclusifs par vhost, et toute tentative d'utilisation de blocs `TCP` ou `UDP` avec multiplexage déclenchera une erreur fatale.
 
 ```bash
 ./beba ./vhosts --vhosts

@@ -373,3 +373,16 @@ if (user) {
     manager.revokeToken("jti-uuid-here");
 }
 ```
+
+---
+
+## 🏗️ Moteur Unifié (Package `processor`)
+
+À partir de la version 0.0.2, tous les scripts (HTTP, DTP, Workers, Auth) sont exécutés via le package interne `processor`. Cela garantit :
+
+1. **Cohérence de l'environnement** : Tous les scripts ont accès aux mêmes modules (`db`, `auth`, `sse`, etc.) et aux mêmes objets globaux (`console`, `print`, `fetch`).
+2. **Contexte de Répertoire** : La résolution des chemins via `require()` et `fs` est toujours relative au dossier racine du site (BaseDir), assurant la portabilité.
+3. **Injection Automatique** : Les configurations définies via `SET` dans vos fichiers `.bind` sont automatiquement injectées dans l'objet global `settings`.
+
+> [!WARNING]
+> Pour les développeurs étendant `beba` en Go : N'utilisez JAMAIS `goja.New()` directement pour exécuter du code utilisateur. Utilisez toujours `processor.New(dir, ctx, config)` pour initialiser une VM complète et sécurisée.

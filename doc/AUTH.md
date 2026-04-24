@@ -138,5 +138,8 @@ Permet d'injecter du code arbitraire pour valider les accès.
     - *useProto* : (Optionnel) Pour DTP, booléen forçant l'usage de Protobuf.
 - `reject(message)` : Refuse l'accès avec un message explicatif.
 
-**Debug :**
-Les scripts d'authentification ont accès aux fonctions globales `print()` et `console.log()` pour faciliter le débogage dans les logs du serveur.
+**Debug & Environnement :**
+Les scripts d'authentification s'exécutent dans un environnement **unifié** (via le package `processor`). Ils bénéficient de :
+- **Modules natifs** : `require('db')`, `require('auth')`, `require('http')`, etc.
+- **Fonctions de log** : `print()` et `console.log()` pour le débogage en temps réel dans les logs du serveur.
+- **Base Directory** : Accès relatif aux fichiers par rapport au dossier racine du site/vhost.

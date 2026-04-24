@@ -33,28 +33,34 @@ Le flag `--vhost` (ou `-V`) active le mode Virtual Host. Le premier argument pos
 
 ---
 
-## Architecture Master-Worker
+### Architecture Master-Worker-Proxy
 
 ```
                     ┌────────────────────────────┐
                     │     Master Process         │
-                    │  (reverse proxy + SNI)     │
-                    │                            │
-                    │  :8080   (HTTP)            │
-                    │  :443    (HTTPS)           │
+                    │  (Orchestrator & Scanner)  │
                     └─┬──────────┬──────────┬────┘
                       │          │          │
-               ┌──────▼──-┐ ┌────▼────┐ ┌───▼─────┐
-               │ Worker 0 │ │Worker 1 │ │Worker 2 │
-               │ site-a   │ │ site-b  │ │  api    │
-               │ UDS 0    │ │ UDS 1   │ │ UDS 2   │
-               └──────────┘ └─────────┘ └─────────┘
+            ┌─────────▼────────┐ │ ┌────────▼─────────┐
+            │  Proxy Process   │ │ │  Proxy Process   │
+            │  (Port :8080)    │ │ │  (Port :443)     │
+            └────┬────────┬────┘ │ └────┬────────┬────┘
+                 │        │      │      │        │
+          ┌──────▼──┐ ┌──▼───────▼──────▼─┐ ┌────▼─────┐
+          │ Worker A│ │      Worker B     │ │ Worker C │
+          │(site-a) │ │      (site-b)     │ │  (api)   │
+          └─────────┘ └───────────────────┘ └──────────┘
 ```
 
-1. **Master** : écoute sur les ports publics (HTTP, HTTPS), inspecte le `Host` header, et route la requête vers le bon worker via un proxy interne.
-2. **Workers** : chaque vhost est un processus enfant indépendant, écoutant sur un Unix Domain Socket (UDS) privé dans `/tmp`.
+1. **Master** : Orchestre le démarrage, scanne les dossiers vhosts, et spawne les sous-processus nécessaires. Il ne traite aucun trafic réseau direct.
+2. **Proxy** : Pour chaque port d'écoute unique défini dans les vhosts, le master spawne un processus **Proxy**. Ce processus est le seul à écouter sur le port public. Il inspecte le `Host` header et délègue la connexion au bon worker.
+3. **Workers** : Chaque dossier vhost devient un processus **Worker** indépendant. Il écoute sur un **Control Socket** (Unix Domain Socket) privé.
 
-Le master transmet la requête complète au worker via `fasthttp.Client` (proxy), préservant les headers, cookies et body.
+#### Communication Inter-Processus (IPC)
+Le Proxy communique avec les Workers via leurs sockets de contrôle. Ce mécanisme permet :
+- **Multiplexage de domaines** : Plusieurs sites partageant le même port sont isolés dans des processus différents.
+- **Validation réactive** : Le Proxy peut valider l'existence d'une route ou d'un domaine auprès du worker avant de transférer la connexion.
+- **Support SNI** : Les certificats SSL sont gérés de manière centralisée ou déléguée selon la configuration.
 
 ---
 
@@ -141,7 +147,10 @@ HTTPS ":443"
 END HTTPS
 ```
 
-### Exemple Multi-Protocoles
+### Exemple Multi-Protocoles (Single Mode uniquement)
+
+> [!CAUTION]
+> Le multiplexage de protocoles (via `TCP` ou `UDP` Binder) n'est **pas disponible** en mode Virtual Host. Seuls les protocoles de haut niveau (HTTP, HTTPS) peuvent partager les ports publics. Les protocoles comme MQTT ou DTP doivent utiliser des ports exclusifs par vhost, et toute tentative d'utilisation de blocs `TCP` ou `UDP` avec multiplexage déclenchera une erreur fatale.
 
 ```bind
 HTTP ":80"
@@ -284,4 +293,4 @@ END HTTPS
 Voir aussi : [examples/vhosts/](../examples/vhosts/) pour des exemples fonctionnels.
 
 ---
-*Dernière mise à jour : 16 Avril 2026*
+*Dernière mise à jour : 24 Avril 2026*

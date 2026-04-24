@@ -54,10 +54,12 @@ Le bloc `DTP` permet d'associer des scripts JavaScript à des types de paquets o
 | `DATA [subtype]` | Handler pour les messages de données (Type 0x01). |
 | `CMD [subtype]` | Handler pour les commandes (Type 0x06). |
 | `EVENT [subtype]`| Handler pour les alertes/événements (Type 0x07). |
-| `ERR` | Handler pour les messages d'erreur du protocole. |
+| `PING` | Handler pour les messages de battement de cœur (Type 0x04). |
+| `PONG` | Handler pour les réponses de battement de cœur (Type 0x05). |
+| `ACK` / `NACK` | Handlers pour les acquittements (Type 0x02/0x03). |
+| `ERR` | Handler pour les messages d'erreur du protocole (Type 0x08). |
 | `QUEUE` | Handler pour la mise en file d'attente (messages persistants). |
 | `ONLINE` | Hook de statut de session (publie sur `dtp.session.status`). |
-| `PING` / `PONG` | Handlers pour les messages de battement de cœur. |
 
 ### Subtypes
 Les subtypes peuvent être spécifiés par leur nom (ex: `SENSOR_DATA`) ou leur code hexadécimal (ex: `0x01`).
